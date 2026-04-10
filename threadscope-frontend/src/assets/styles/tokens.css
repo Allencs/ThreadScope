@@ -1,0 +1,88 @@
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ThreadScope Design Tokens v2
+   Modern Light Theme — Inspired by Linear, Vercel, Raycast
+   Clean, precise, professional tooling aesthetic
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+:root {
+  /* ── Background Layers ── */
+  --ts-bg-primary:      #f8f9fb;
+  --ts-bg-secondary:    #ffffff;
+  --ts-bg-surface:      #ffffff;
+  --ts-bg-elevated:     #f0f2f5;
+  --ts-bg-hover:        #f0f2f5;
+  --ts-bg-active:       #e8eaef;
+  --ts-bg-inset:        #f4f5f7;
+
+  /* ── Text ── */
+  --ts-text-primary:    #1a1d23;
+  --ts-text-secondary:  #5c6370;
+  --ts-text-muted:      #9ca3af;
+  --ts-text-faint:      #c4c9d4;
+
+  /* ── Thread State Colors (tuned for light bg) ── */
+  --ts-state-runnable:  #16a34a;
+  --ts-state-blocked:   #dc2626;
+  --ts-state-waiting:   #d97706;
+  --ts-state-timed:     #2563eb;
+  --ts-state-new:       #7c3aed;
+  --ts-state-terminated:#9ca3af;
+
+  /* ── Semantic Colors ── */
+  --ts-accent:          #2563eb;
+  --ts-accent-light:    #eff6ff;
+  --ts-danger:          #dc2626;
+  --ts-danger-light:    #fef2f2;
+  --ts-warning:         #d97706;
+  --ts-warning-light:   #fffbeb;
+  --ts-success:         #16a34a;
+  --ts-success-light:   #f0fdf4;
+  --ts-info:            #2563eb;
+
+  /* ── Typography ── */
+  --ts-font-display:    'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', monospace;
+  --ts-font-ui:         -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+  --ts-font-size-xs:    11px;
+  --ts-font-size-sm:    12.5px;
+  --ts-font-size-md:    14px;
+  --ts-font-size-lg:    15px;
+  --ts-font-size-xl:    18px;
+  --ts-font-size-2xl:   24px;
+  --ts-font-size-3xl:   32px;
+
+  /* ── Spacing (4px Grid) ── */
+  --ts-space-2xs: 2px;
+  --ts-space-xs:  4px;
+  --ts-space-sm:  8px;
+  --ts-space-md:  16px;
+  --ts-space-lg:  24px;
+  --ts-space-xl:  32px;
+  --ts-space-2xl: 48px;
+
+  /* ── Border & Radius ── */
+  --ts-border-color:    #e5e7eb;
+  --ts-border:          1px solid var(--ts-border-color);
+  --ts-radius-xs:       4px;
+  --ts-radius-sm:       6px;
+  --ts-radius-md:       8px;
+  --ts-radius-lg:       12px;
+  --ts-radius-xl:       16px;
+  --ts-radius-full:     9999px;
+
+  /* ── Shadows ── */
+  --ts-shadow-xs:       0 1px 2px rgba(0, 0, 0, 0.04);
+  --ts-shadow-sm:       0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --ts-shadow-md:       0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+  --ts-shadow-lg:       0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+  --ts-shadow-ring:     0 0 0 3px rgba(37, 99, 235, 0.12);
+
+  /* ── Transition ── */
+  --ts-transition:      150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --ts-transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Layout ── */
+  --ts-sidebar-width:   220px;
+  --ts-sidebar-collapsed: 56px;
+  --ts-topbar-height:   52px;
+  --ts-statusbar-height: 28px;
+}

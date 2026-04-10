@@ -1,0 +1,48 @@
+# ===== Java / Spring Boot =====
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+replay_pid*
+
+# ===== Gradle =====
+.gradle/
+threadscope-backend/build/
+threadscope-backend/bin/
+threadscope-backend/.gradle/
+
+# ===== Node / npm =====
+node_modules/
+threadscope-frontend/node_modules/
+threadscope-frontend/dist/
+
+# ===== IDE =====
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Environment & secrets =====
+.env
+.env.*
+!.env.example
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Vite =====
+*.local

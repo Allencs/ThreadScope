@@ -1,0 +1,30 @@
+{
+  "name": "threadscope-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.4.38",
+    "vue-router": "^4.4.3",
+    "pinia": "^2.2.2",
+    "axios": "^1.7.7",
+    "echarts": "^5.5.1",
+    "vue-echarts": "^7.0.3",
+    "naive-ui": "^2.39.0",
+    "@vueuse/core": "^11.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.4",
+    "typescript": "~5.5.4",
+    "vite": "^5.4.8",
+    "vue-tsc": "^2.1.6",
+    "unocss": "^0.62.4",
+    "@unocss/preset-uno": "^0.62.4",
+    "@unocss/preset-icons": "^0.62.4"
+  }
+}

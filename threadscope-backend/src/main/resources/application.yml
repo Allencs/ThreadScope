@@ -1,0 +1,23 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: threadscope
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 500MB
+      max-request-size: 500MB
+      file-size-threshold: 2KB
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+
+threadscope:
+  analysis:
+    cache-max-size: 100
+    cache-expire-minutes: 60
+    parse-timeout-seconds: 30
+    max-threads-per-dump: 50000
