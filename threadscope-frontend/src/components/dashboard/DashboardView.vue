@@ -119,7 +119,7 @@ function navigateToLock(lockAddr: string) {
 }
 
 function navigateToThread(threadName: string) {
-  store.searchQuery = threadName
+  store.openThreadDetailTab(threadName)
   router.push({ name: 'threads', params: { analysisId: route.params.analysisId } })
 }
 
@@ -424,7 +424,13 @@ const tabs = [
             <span class="risk-card__arrow">→ View in Locks</span>
           </a>
           <div v-if="risk.affectedThreads?.length" class="risk-card__threads">
-            <span class="thread-pill mono" v-for="t in risk.affectedThreads.slice(0, 3)" :key="t">{{ t }}</span>
+            <span
+              class="thread-pill thread-pill--clickable mono"
+              v-for="t in risk.affectedThreads.slice(0, 3)"
+              :key="t"
+              @click="navigateToThread(t)"
+              :title="'View ' + t + ' in Threads'"
+            >{{ t }}<span class="thread-pill__arrow">→</span></span>
             <span v-if="risk.affectedThreads.length > 3" class="thread-pill thread-pill--more">+{{ risk.affectedThreads.length - 3 }} more</span>
           </div>
         </div>
@@ -498,7 +504,7 @@ function detectPool(threadName: string): string {
 .chart-label {
   font-size: var(--ts-font-size-xs);
   font-weight: 600;
-  color: var(--ts-text-muted);
+  color: var(--ts-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -553,7 +559,7 @@ function detectPool(threadName: string): string {
 
 .donut-center__label {
   font-size: 10px;
-  color: var(--ts-text-muted);
+  color: var(--ts-text-secondary);
   margin-top: 2px;
 }
 
@@ -607,7 +613,7 @@ function detectPool(threadName: string): string {
 }
 
 .legend-pct {
-  color: var(--ts-text-muted);
+  color: var(--ts-text-secondary);
   min-width: 44px;
   text-align: right;
   font-size: var(--ts-font-size-xs);
@@ -662,12 +668,13 @@ function detectPool(threadName: string): string {
 .metric-value small {
   font-size: 11px;
   font-weight: 500;
-  color: var(--ts-text-muted);
+  color: var(--ts-text-secondary);
 }
 
 .metric-label {
   font-size: 10px;
-  color: var(--ts-text-muted);
+  color: var(--ts-text-secondary);
+  font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.3px;
   margin-top: 2px;
@@ -904,11 +911,23 @@ function detectPool(threadName: string): string {
 
 .risk-card__badge {
   font-size: 9px;
-  padding: 2px 6px;
-  background: var(--ts-bg-elevated);
+  padding: 2px 8px;
   border-radius: var(--ts-radius-sm);
-  color: var(--ts-text-muted);
+  font-weight: 700;
+  letter-spacing: 0.5px;
   flex-shrink: 0;
+}
+
+.risk-card--critical .risk-card__badge {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+.risk-card--warning .risk-card__badge {
+  background: #fffbeb;
+  color: #d97706;
+  border: 1px solid #fde68a;
 }
 
 .risk-card__desc {
@@ -954,6 +973,32 @@ function detectPool(threadName: string): string {
   border-radius: var(--ts-radius-full);
   color: var(--ts-text-muted);
   white-space: nowrap;
+}
+
+.thread-pill--clickable {
+  cursor: pointer;
+  color: var(--ts-text-secondary);
+  border: 1px solid var(--ts-border-color);
+  transition: all var(--ts-transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.thread-pill--clickable:hover {
+  color: var(--ts-accent);
+  border-color: var(--ts-accent);
+  background: var(--ts-accent-light);
+}
+
+.thread-pill__arrow {
+  font-size: 8px;
+  opacity: 0;
+  transition: opacity var(--ts-transition);
+}
+
+.thread-pill--clickable:hover .thread-pill__arrow {
+  opacity: 1;
 }
 
 .thread-pill--more {

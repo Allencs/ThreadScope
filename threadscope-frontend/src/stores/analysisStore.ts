@@ -36,6 +36,31 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const sortBy = ref<string>('default')
   const highlightLockAddress = ref<string | null>(null)
 
+  // ── Thread Detail Tabs ──
+  const threadDetailTabs = ref<string[]>([])
+  const activeThreadTab = ref<string | null>(null)
+
+  function openThreadDetailTab(threadName: string) {
+    if (!threadDetailTabs.value.includes(threadName)) {
+      threadDetailTabs.value.push(threadName)
+    }
+    activeThreadTab.value = threadName
+  }
+
+  function closeThreadDetailTab(threadName: string) {
+    const idx = threadDetailTabs.value.indexOf(threadName)
+    if (idx >= 0) {
+      threadDetailTabs.value.splice(idx, 1)
+    }
+    if (activeThreadTab.value === threadName) {
+      activeThreadTab.value = null
+    }
+  }
+
+  function switchToThreadList() {
+    activeThreadTab.value = null
+  }
+
   // ── Computed ──
   const isAnalyzed = computed(() => analysisId.value !== null)
   const healthLevel = computed(() => overview.value?.healthReport?.overallLevel ?? 'HEALTHY')
@@ -133,6 +158,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     stateFilter.value = []
     sortBy.value = 'default'
     highlightLockAddress.value = null
+    threadDetailTabs.value = []
+    activeThreadTab.value = null
   }
 
   return {
@@ -141,6 +168,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     overview, threads, threadTotal,
     locks, deadlocks, threadPools, stackAggregations, methodHotspots,
     activeModule, searchQuery, stateFilter, sortBy, highlightLockAddress,
+    threadDetailTabs, activeThreadTab,
+    openThreadDetailTab, closeThreadDetailTab, switchToThreadList,
     // Computed
     isAnalyzed, healthLevel,
     // Actions

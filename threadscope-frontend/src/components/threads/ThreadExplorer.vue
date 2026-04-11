@@ -3,12 +3,13 @@
  * ThreadExplorer — 线程列表主视图。
  * 支持多维度搜索、状态过滤、虚拟滚动展示。
  *
- * v2: 锁操作按 frameIndex 内联显示在对应堆栈帧之后，并支持点击跳转到 Locks 页面。
+ * v3: Tab 容器 — 固定 "All Threads" 列表 + 从外部跳转打开的线程详情 Tab。
  */
 import { ref, onMounted, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
 import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo, type LockAction } from '@/types'
+import ThreadDetailTab from './ThreadDetailTab.vue'
 
 const store = useAnalysisStore()
 const route = useRoute()
@@ -18,6 +19,8 @@ const searchInput = ref('')
 const expandedThreads = ref<Set<string>>(new Set())
 const currentPage = ref(1)
 const pageSize = 50
+
+const isListActive = computed(() => store.activeThreadTab === null)
 
 onMounted(() => {
   if (store.searchQuery) {
@@ -139,6 +142,47 @@ function navigateToLock(lockAddress: string) {
 
 <template>
   <div class="thread-explorer">
+    <!-- Tab Bar (only visible when detail tabs exist) -->
+    <div v-if="store.threadDetailTabs.length > 0" class="thread-tab-bar">
+      <button
+        class="thread-tab"
+        :class="{ 'thread-tab--active': isListActive }"
+        @click="store.switchToThreadList()"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <line x1="2" y1="4" x2="14" y2="4"/>
+          <line x1="2" y1="8" x2="14" y2="8"/>
+          <line x1="2" y1="12" x2="14" y2="12"/>
+        </svg>
+        All Threads
+      </button>
+      <button
+        v-for="tabName in store.threadDetailTabs"
+        :key="tabName"
+        class="thread-tab"
+        :class="{ 'thread-tab--active': store.activeThreadTab === tabName }"
+        @click="store.openThreadDetailTab(tabName)"
+        :title="tabName"
+      >
+        <span class="thread-tab__name mono">{{ tabName }}</span>
+        <span
+          class="thread-tab__close"
+          @click.stop="store.closeThreadDetailTab(tabName)"
+          title="Close"
+        >×</span>
+      </button>
+    </div>
+
+    <!-- Detail Tab Content -->
+    <ThreadDetailTab
+      v-if="!isListActive && store.activeThreadTab"
+      :key="store.activeThreadTab"
+      :thread-name="store.activeThreadTab"
+    />
+
+    <!-- Main List Content (hidden when a detail tab is active) -->
+    <template v-if="isListActive">
+
     <!-- Search & Filter Bar -->
     <div class="search-bar">
       <div class="search-input-wrapper">
@@ -304,6 +348,8 @@ function navigateToLock(lockAddress: string) {
       <span class="page-info mono">Page {{ currentPage }} / {{ totalPages }}</span>
       <button @click="loadPage(currentPage + 1)" :disabled="currentPage >= totalPages" class="page-btn">&gt;</button>
     </div>
+
+    </template><!-- end isListActive -->
   </div>
 </template>
 
@@ -313,6 +359,77 @@ function navigateToLock(lockAddress: string) {
   flex-direction: column;
   gap: var(--ts-space-md);
   height: 100%;
+}
+
+/* ── Thread Tab Bar ── */
+.thread-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--ts-bg-elevated);
+  border-radius: var(--ts-radius-md);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.thread-tab-bar::-webkit-scrollbar {
+  height: 0;
+}
+
+.thread-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: var(--ts-font-size-sm);
+  font-weight: 500;
+  color: var(--ts-text-secondary);
+  border: none;
+  border-radius: var(--ts-radius-sm);
+  background: transparent;
+  cursor: pointer;
+  transition: all var(--ts-transition);
+  white-space: nowrap;
+  max-width: 220px;
+  flex-shrink: 0;
+}
+
+.thread-tab:hover {
+  color: var(--ts-text-primary);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.thread-tab--active {
+  color: var(--ts-text-primary);
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-weight: 600;
+}
+
+.thread-tab__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-tab__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--ts-radius-full);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ts-text-muted);
+  flex-shrink: 0;
+  transition: all var(--ts-transition);
+}
+
+.thread-tab__close:hover {
+  background: var(--ts-bg-active);
+  color: var(--ts-text-primary);
 }
 
 /* ── Search Bar ── */

@@ -180,6 +180,53 @@ function shortClassName(full: string): string {
   return parts[parts.length - 1] || full
 }
 
+interface HolderDisplay {
+  tag: string
+  color: string
+  bg: string
+  detail: string
+}
+
+function getHolderDisplay(lockClassName: string): HolderDisplay {
+  const cls = lockClassName
+
+  // j.u.c Condition 等待
+  if (cls.includes('ConditionObject')) {
+    return { tag: 'Condition', color: '#7c3aed', bg: '#f5f3ff', detail: 'Condition 条件等待 — 线程主动 await，无持有者概念' }
+  }
+  // 同步队列
+  if (cls.includes('SynchronousQueue')) {
+    return { tag: 'Queue', color: '#0891b2', bg: '#ecfeff', detail: 'SynchronousQueue 同步队列 — 等待配对的生产者/消费者' }
+  }
+  if (cls.includes('LinkedBlockingQueue') || cls.includes('ArrayBlockingQueue') || cls.includes('BlockingQueue')) {
+    return { tag: 'Queue', color: '#0891b2', bg: '#ecfeff', detail: '阻塞队列等待 — 队列空/满时的等待' }
+  }
+  // j.u.c 工具类
+  if (cls.includes('CountDownLatch')) {
+    return { tag: 'Latch', color: '#6366f1', bg: '#eef2ff', detail: 'CountDownLatch — 等待计数归零' }
+  }
+  if (cls.includes('Semaphore')) {
+    return { tag: 'Semaphore', color: '#6366f1', bg: '#eef2ff', detail: '信号量等待 — 等待许可' }
+  }
+  if (cls.includes('FutureTask') || cls.includes('CompletableFuture')) {
+    return { tag: 'Future', color: '#059669', bg: '#ecfdf5', detail: '异步结果等待 — 等待任务完成' }
+  }
+  // j.u.c 显式锁
+  if (cls.includes('ReentrantReadWriteLock')) {
+    return { tag: 'RWLock', color: '#d97706', bg: '#fffbeb', detail: '读写锁 — dump 中未记录持有者 (需 jstack -l)' }
+  }
+  if (cls.includes('ReentrantLock') || cls.includes('NonfairSync') || cls.includes('FairSync')) {
+    return { tag: 'Lock', color: '#d97706', bg: '#fffbeb', detail: 'ReentrantLock — dump 中未记录持有者 (需 jstack -l)' }
+  }
+  // 其他 AQS 内部类
+  if (cls.includes('AbstractQueuedSynchronizer') || cls.includes('AbstractOwnableSynchronizer')) {
+    return { tag: 'AQS', color: '#6b7280', bg: '#f3f4f6', detail: 'AQS 等待 — 无持有者信息' }
+  }
+
+  // 兜底：普通 Java 类 → synchronized 同步锁 (monitor)
+  return { tag: 'Monitor', color: '#e11d48', bg: '#fff1f2', detail: 'synchronized 同步锁 — 通过 synchronized 关键字获取的对象监视器锁' }
+}
+
 function getLockActionsForFrame(thread: ThreadInfo, frameIdx: number): LockAction[] {
   return thread.lockActions.filter(la => la.frameIndex === frameIdx)
 }
@@ -289,10 +336,21 @@ function getStateBadgeClass(state: ThreadState): string {
               </svg>
             </span>
             <span class="col-addr mono">{{ lock.lockAddress }}</span>
-            <span class="col-class" :title="lock.lockClassName">{{ shortClassName(lock.lockClassName) }}</span>
+            <span class="col-class" :title="lock.lockClassName">
+              <span class="class-name">{{ shortClassName(lock.lockClassName) }}</span>
+              <span
+                class="lock-type-tag"
+                :style="{
+                  color: getHolderDisplay(lock.lockClassName).color,
+                  background: getHolderDisplay(lock.lockClassName).bg,
+                  borderColor: getHolderDisplay(lock.lockClassName).color + '30',
+                }"
+                :title="getHolderDisplay(lock.lockClassName).detail"
+              >{{ getHolderDisplay(lock.lockClassName).tag }}</span>
+            </span>
             <span class="col-holder mono">
               <span v-if="lock.holderThreadName" class="holder-name">{{ lock.holderThreadName }}</span>
-              <span v-else class="holder-unknown">(unknown)</span>
+              <span v-else class="holder-na">N/A</span>
             </span>
             <span class="col-waiters">
               <span class="waiter-count" :style="{ color: severityColor(lock.waitingThreadNames.length) }">
@@ -327,10 +385,25 @@ function getStateBadgeClass(state: ThreadState): string {
                     <span class="meta-value mono">{{ lock.lockClassName }}</span>
                   </div>
                   <div class="meta-item">
-                    <span class="meta-label">Holder</span>
-                    <span class="meta-value mono" :class="lock.holderThreadName ? 'meta-value--holder' : 'meta-value--no-holder'">
-                      {{ lock.holderThreadName || '(no holder — Condition/FutureTask wait)' }}
+                    <span class="meta-label">Type</span>
+                    <span class="meta-value meta-value--type">
+                      <span
+                        class="lock-type-tag"
+                        :style="{
+                          color: getHolderDisplay(lock.lockClassName).color,
+                          background: getHolderDisplay(lock.lockClassName).bg,
+                          borderColor: getHolderDisplay(lock.lockClassName).color + '30',
+                        }"
+                      >{{ getHolderDisplay(lock.lockClassName).tag }}</span>
+                      <span class="type-detail-text">{{ getHolderDisplay(lock.lockClassName).detail }}</span>
                     </span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Holder</span>
+                    <span v-if="lock.holderThreadName" class="meta-value mono meta-value--holder">
+                      {{ lock.holderThreadName }}
+                    </span>
+                    <span v-else class="meta-value meta-value--no-holder">N/A</span>
                   </div>
                   <div class="meta-item">
                     <span class="meta-label">Contention</span>
@@ -766,9 +839,47 @@ function getStateBadgeClass(state: ThreadState): string {
   font-weight: 500;
 }
 
-.holder-unknown {
+.holder-na {
   color: var(--ts-text-muted);
-  font-style: italic;
+}
+
+.col-class {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.class-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lock-type-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: var(--ts-radius-full);
+  border: 1px solid;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-family: var(--ts-font-ui);
+}
+
+.type-detail-text {
+  font-size: var(--ts-font-size-xs);
+  color: var(--ts-text-secondary);
+  margin-left: 8px;
+  font-family: var(--ts-font-ui);
+}
+
+.meta-value--type {
+  display: flex;
+  align-items: center;
 }
 
 .waiter-count {

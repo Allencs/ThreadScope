@@ -66,8 +66,7 @@ async function togglePool(poolName: string) {
 
 function navigateToThread(threadName: string) {
   const analysisId = route.params.analysisId as string
-  // Navigate to Threads page with search pre-filled
-  store.searchQuery = threadName
+  store.openThreadDetailTab(threadName)
   router.push({ name: 'threads', params: { analysisId } })
 }
 
