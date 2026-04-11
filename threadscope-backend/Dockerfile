@@ -22,4 +22,4 @@ USER app
 
 EXPOSE 8080
 
-ENTRYPOINT ["java", "--enable-preview", "-jar", "app.jar"]
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS --enable-preview -jar app.jar"]

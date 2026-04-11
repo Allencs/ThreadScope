@@ -29,6 +29,9 @@ dependencies {
     // Cache (for analysis results)
     implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
 
+    // Actuator (health check)
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+
     // Logging
     implementation("org.springframework.boot:spring-boot-starter-logging")
 
