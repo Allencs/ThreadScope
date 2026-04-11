@@ -7,7 +7,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
-import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo, type LockAction } from '@/types'
+import { STATE_LABELS, type ThreadState, type ThreadInfo, type LockAction } from '@/types'
 import * as api from '@/api/threadscope'
 
 const props = defineProps<{ threadName: string }>()
