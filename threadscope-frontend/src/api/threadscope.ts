@@ -4,6 +4,7 @@ import type {
   OverviewData,
   ThreadListResponse,
   ThreadInfo,
+  ThreadSummary,
   LockInfo,
   DeadlockInfo,
   ThreadPoolInfo,
@@ -66,6 +67,15 @@ export async function fetchThreadsBatch(
   names: string[]
 ): Promise<{ threads: ThreadInfo[]; total: number }> {
   const { data } = await api.post(`/analysis/${analysisId}/threads/batch`, { names })
+  return data
+}
+
+/** Batch fetch thread summaries (state/daemon/stackDepth only) — lightweight preloading for lock thread lists. */
+export async function fetchThreadsBatchSummary(
+  analysisId: string,
+  names: string[]
+): Promise<{ summaries: ThreadSummary[]; total: number }> {
+  const { data } = await api.post(`/analysis/${analysisId}/threads/batch-summary`, { names })
   return data
 }
 

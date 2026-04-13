@@ -8,7 +8,7 @@
 import { ref, onMounted, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
-import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo, type LockAction } from '@/types'
+import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo, type LockAction, type LockInfo } from '@/types'
 import ThreadDetailTab from './ThreadDetailTab.vue'
 
 const store = useAnalysisStore()
@@ -22,11 +22,22 @@ const pageSize = 50
 
 const isListActive = computed(() => store.activeThreadTab === null)
 
+const lockMap = computed<Record<string, LockInfo>>(() => {
+  const map: Record<string, LockInfo> = {}
+  for (const lock of store.locks) {
+    map[lock.lockAddress] = lock
+  }
+  return map
+})
+
 onMounted(() => {
   if (store.searchQuery) {
     searchInput.value = store.searchQuery
   }
   store.loadThreads(1, pageSize)
+  if (store.locks.length === 0) {
+    store.loadLocks()
+  }
 })
 
 // Debounced search
@@ -137,6 +148,35 @@ function getLockActionCssClass(lock: LockAction): string {
 function navigateToLock(lockAddress: string) {
   store.highlightLockAddress = lockAddress
   router.push({ name: 'locks', params: { analysisId: route.params.analysisId } })
+}
+
+// ── Lock contention annotation for Held locks ──
+
+function getLockContentionInfo(lock: LockAction): LockInfo | null {
+  if (lock.type !== 'Held') return null
+  return lockMap.value[lock.lockAddress] ?? null
+}
+
+function getLockTypeLabel(className: string): { tag: string; detail: string } {
+  if (className.includes('ConditionObject'))
+    return { tag: 'Condition', detail: 'Condition 条件等待' }
+  if (className.includes('SynchronousQueue'))
+    return { tag: 'Queue', detail: '同步队列' }
+  if (className.includes('LinkedBlockingQueue') || className.includes('ArrayBlockingQueue') || className.includes('BlockingQueue'))
+    return { tag: 'Queue', detail: '阻塞队列' }
+  if (className.includes('CountDownLatch'))
+    return { tag: 'Latch', detail: 'CountDownLatch' }
+  if (className.includes('Semaphore'))
+    return { tag: 'Semaphore', detail: '信号量' }
+  if (className.includes('FutureTask') || className.includes('CompletableFuture'))
+    return { tag: 'Future', detail: '异步等待' }
+  if (className.includes('ReentrantReadWriteLock'))
+    return { tag: 'RWLock', detail: '读写锁' }
+  if (className.includes('ReentrantLock') || className.includes('NonfairSync') || className.includes('FairSync'))
+    return { tag: 'Lock', detail: 'ReentrantLock' }
+  if (className.includes('AbstractQueuedSynchronizer') || className.includes('AbstractOwnableSynchronizer'))
+    return { tag: 'AQS', detail: 'AQS 同步器' }
+  return { tag: 'Monitor', detail: 'synchronized 同步锁' }
 }
 </script>
 
@@ -314,13 +354,23 @@ function navigateToLock(lockAddress: string) {
                 v-for="(lock, lockIdx) in getLockActionsForFrame(thread, idx)"
                 :key="'lock-' + idx + '-' + lockIdx"
                 class="lock-action mono"
-                :class="getLockActionCssClass(lock)"
+                :class="[getLockActionCssClass(lock), { 'lock-action--contention': getLockContentionInfo(lock)?.waitingThreadNames?.length }]"
                 @click.stop="navigateToLock(lock.lockAddress)"
                 :title="'Click to view lock ' + lock.lockAddress + ' in Locks page'"
               >
                 <span class="lock-type">{{ getLockActionLabel(lock) }}</span>
                 &lt;<span class="lock-addr">{{ lock.lockAddress }}</span>&gt;
                 (a {{ lock.lockClassName }})
+                <template v-if="getLockContentionInfo(lock)?.waitingThreadNames?.length">
+                  <span class="lock-contention-badge">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                      <path d="M8 1.5L14.5 13H1.5L8 1.5Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                      <path d="M8 6v3.5M8 11h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    </svg>
+                    {{ getLockTypeLabel(lock.lockClassName).tag }}
+                    · 阻塞 {{ getLockContentionInfo(lock)!.waitingThreadNames.length }} 个线程
+                  </span>
+                </template>
                 <span class="lock-goto">→</span>
               </div>
             </template>
@@ -834,6 +884,35 @@ function navigateToLock(lockAddress: string) {
 
 .lock-action:hover .lock-addr {
   text-decoration-style: solid;
+}
+
+/* ── Lock Contention Badge (inline with Held lock actions) ── */
+.lock-contention-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 8px;
+  margin-left: 6px;
+  border-radius: var(--ts-radius-full);
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  white-space: nowrap;
+  font-family: var(--ts-font-ui);
+  letter-spacing: 0.2px;
+  line-height: 1.5;
+}
+
+.lock-contention-badge svg {
+  flex-shrink: 0;
+}
+
+.lock-action--contention.lock-action--held {
+  background: #fefce8;
+  border-left-color: #dc2626;
+  border-left-width: 3px;
 }
 
 /* Left border indicator for lock action type */

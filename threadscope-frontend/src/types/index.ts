@@ -44,6 +44,14 @@ export interface ThreadInfo {
   ownableSynchronizers: string[]
 }
 
+export interface ThreadSummary {
+  name: string
+  state: ThreadState
+  daemon: boolean
+  stackDepth: number
+  hasLockActions: boolean
+}
+
 export interface LockInfo {
   lockAddress: string
   lockClassName: string

@@ -174,6 +174,29 @@ public class AnalysisController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * 批量查询线程摘要 — 仅返回列表展示所需的轻量字段 (state / daemon / stackDepth)。
+     * 相比 /threads/batch 大幅减少响应体积 (去掉了完整堆栈与锁操作)。
+     */
+    @PostMapping("/threads/batch-summary")
+    public ResponseEntity<Map<String, Object>> getThreadsBatchSummary(
+            @PathVariable String analysisId,
+            @RequestBody Map<String, List<String>> body) {
+        AnalysisResult result = storageService.getOrThrow(analysisId);
+        List<String> names = body.getOrDefault("names", List.of());
+        Set<String> nameSet = new HashSet<>(names);
+
+        List<ThreadSummary> summaries = result.threads().stream()
+            .filter(t -> nameSet.contains(t.name()))
+            .map(ThreadSummary::from)
+            .toList();
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("summaries", summaries);
+        response.put("total", summaries.size());
+        return ResponseEntity.ok(response);
+    }
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  锁分析
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -4,14 +4,27 @@
  * - 每行锁可展开查看等待线程列表
  * - 每个等待线程可再次展开，显示完整堆栈帧和锁操作（与 Threads Explorer 一致）
  * - 支持从 Dashboard 跳转高亮
+ *
+ * 性能优化策略：
+ * 1. 双层缓存：summaryCache（轻量摘要，列表显示用）+ threadCache（完整数据，展开时用）
+ * 2. 分块渲染：大列表通过 renderLimit 逐步渲染，避免一次性挂载数百 DOM 节点
+ * 3. content-visibility: auto：不可见区域的 thread-row 跳过布局与绘制
  */
 import { onMounted, ref, watch, nextTick, computed, reactive } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
 import { STATE_COLORS, STATE_LABELS } from '@/types'
-import type { ThreadInfo, ThreadState, LockAction } from '@/types'
+import type { ThreadInfo, ThreadSummary, ThreadState, LockAction, LockInfo } from '@/types'
 import * as api from '@/api/threadscope'
 
 const store = useAnalysisStore()
+const route = useRoute()
+const router = useRouter()
+
+function navigateToThread(threadName: string) {
+  store.openThreadDetailTab(threadName)
+  router.push({ name: 'threads', params: { analysisId: route.params.analysisId } })
+}
 
 // ── Lock level expand state ──
 const expandedLocks = ref<Set<string>>(new Set())
@@ -20,8 +33,30 @@ const searchQuery = ref('')
 
 // ── Thread level expand state ──
 const expandedThreads = ref<Set<string>>(new Set())
+const summaryCache = reactive<Record<string, ThreadSummary>>({})
 const threadCache = reactive<Record<string, ThreadInfo>>({})
 const threadLoading = ref<Set<string>>(new Set())
+const summaryLoading = ref<Set<string>>(new Set())
+
+// ── Progressive rendering: only mount first N rows, then extend via rAF ──
+const RENDER_CHUNK = 30
+const renderLimits = reactive<Record<string, number>>({})
+
+function getVisibleThreadNames(lockAddr: string, allNames: string[]): string[] {
+  const limit = renderLimits[lockAddr] ?? RENDER_CHUNK
+  return allNames.slice(0, limit)
+}
+
+function scheduleRenderMore(lockAddr: string, total: number) {
+  const current = renderLimits[lockAddr] ?? RENDER_CHUNK
+  if (current >= total) return
+  requestAnimationFrame(() => {
+    renderLimits[lockAddr] = Math.min(current + RENDER_CHUNK, total)
+    if (renderLimits[lockAddr] < total) {
+      scheduleRenderMore(lockAddr, total)
+    }
+  })
+}
 
 onMounted(async () => {
   await store.loadLocks()
@@ -54,10 +89,10 @@ function toggleLock(addr: string) {
     s.delete(addr)
   } else {
     s.add(addr)
-    // Pre-load thread info for all waiting threads of this lock
     const lock = store.locks.find(l => l.lockAddress === addr)
     if (lock) {
-      preloadThreads(lock.waitingThreadNames, lock.holderThreadName)
+      renderLimits[addr] = RENDER_CHUNK
+      preloadSummaries(addr, lock.waitingThreadNames, lock.holderThreadName)
     }
   }
   expandedLocks.value = s
@@ -76,10 +111,10 @@ function expandAndScrollTo(addr: string) {
   s.add(addr)
   expandedLocks.value = s
 
-  // Pre-load thread info for the highlighted lock
   const lock = store.locks.find(l => l.lockAddress === addr)
   if (lock) {
-    preloadThreads(lock.waitingThreadNames, lock.holderThreadName)
+    renderLimits[addr] = RENDER_CHUNK
+    preloadSummaries(addr, lock.waitingThreadNames, lock.holderThreadName)
   }
 
   nextTick(() => {
@@ -107,7 +142,6 @@ function toggleThread(lockAddr: string, threadName: string) {
     s.delete(key)
   } else {
     s.add(key)
-    // Lazy load thread info
     if (!threadCache[threadName]) {
       loadThreadInfo(threadName)
     }
@@ -138,33 +172,74 @@ async function loadThreadInfo(threadName: string) {
 }
 
 /**
- * Batch pre-load thread info for all waiting threads + holder of a lock.
- * Uses the batch API to fetch all at once instead of N individual requests.
+ * 批量预加载线程摘要 — 仅请求 state/daemon/stackDepth 等轻量字段。
+ * 摘要数据分块加载，每块完成后立即可渲染对应行，避免等待全部完成。
  */
-async function preloadThreads(waitingNames: string[], holderName: string | null) {
-  // Collect names that are not yet cached
+async function preloadSummaries(lockAddr: string, waitingNames: string[], holderName: string | null) {
   const allNames = [...waitingNames]
   if (holderName) allNames.push(holderName)
-  const uncached = allNames.filter(n => !threadCache[n])
+  const uncached = allNames.filter(n => !summaryCache[n] && !threadCache[n])
   if (uncached.length === 0 || !store.analysisId) return
 
-  // Mark all as loading
-  const loadingSet = new Set(threadLoading.value)
+  const loadingSet = new Set(summaryLoading.value)
   uncached.forEach(n => loadingSet.add(n))
-  threadLoading.value = loadingSet
+  summaryLoading.value = loadingSet
 
+  const BATCH = 50
   try {
-    const res = await api.fetchThreadsBatch(store.analysisId, uncached)
-    for (const t of res.threads) {
-      threadCache[t.name] = t
+    for (let i = 0; i < uncached.length; i += BATCH) {
+      const chunk = uncached.slice(i, i + BATCH)
+      const res = await api.fetchThreadsBatchSummary(store.analysisId!, chunk)
+      for (const s of res.summaries) {
+        summaryCache[s.name] = s
+      }
+      // After first batch loads, start progressive rendering for remaining items
+      if (i === 0) {
+        scheduleRenderMore(lockAddr, allNames.length)
+      }
     }
   } catch (e) {
-    console.error('Failed to batch load threads', e)
+    console.error('Failed to batch load thread summaries', e)
   } finally {
-    const doneSet = new Set(threadLoading.value)
+    const doneSet = new Set(summaryLoading.value)
     uncached.forEach(n => doneSet.delete(n))
-    threadLoading.value = doneSet
+    summaryLoading.value = doneSet
   }
+}
+
+/**
+ * 获取列表行的显示状态 — 优先使用完整缓存，其次摘要缓存。
+ */
+function getDisplayState(tName: string): ThreadState | null {
+  if (threadCache[tName]) return threadCache[tName].state
+  if (summaryCache[tName]) return summaryCache[tName].state
+  return null
+}
+
+function getDisplayDaemon(tName: string): boolean {
+  if (threadCache[tName]) return threadCache[tName].daemon
+  if (summaryCache[tName]) return summaryCache[tName].daemon
+  return false
+}
+
+function getDisplayStackDepth(tName: string): number {
+  if (threadCache[tName]?.stackTrace?.length) return threadCache[tName].stackTrace.length
+  if (summaryCache[tName]) return summaryCache[tName].stackDepth
+  return 0
+}
+
+function getDisplayHasLockActions(tName: string): boolean {
+  if (threadCache[tName]) return threadCache[tName].lockActions?.some((a: LockAction) => !!a.lockAddress) ?? false
+  if (summaryCache[tName]) return summaryCache[tName].hasLockActions
+  return false
+}
+
+function isThreadDataLoading(tName: string): boolean {
+  return summaryLoading.value.has(tName) || threadLoading.value.has(tName)
+}
+
+function hasAnySummary(tName: string): boolean {
+  return !!threadCache[tName] || !!summaryCache[tName]
 }
 
 // ── Helpers ──
@@ -227,6 +302,31 @@ function getHolderDisplay(lockClassName: string): HolderDisplay {
   return { tag: 'Monitor', color: '#e11d48', bg: '#fff1f2', detail: 'synchronized 同步锁 — 通过 synchronized 关键字获取的对象监视器锁' }
 }
 
+const lockMap = computed<Record<string, LockInfo>>(() => {
+  const map: Record<string, LockInfo> = {}
+  for (const lock of store.locks) {
+    map[lock.lockAddress] = lock
+  }
+  return map
+})
+
+function getLockContentionInfo(lock: LockAction): LockInfo | null {
+  if (lock.type !== 'Held') return null
+  return lockMap.value[lock.lockAddress] ?? null
+}
+
+function getLockTypeTag(className: string): string {
+  if (className.includes('ConditionObject')) return 'Condition'
+  if (className.includes('SynchronousQueue') || className.includes('BlockingQueue') || className.includes('LinkedBlockingQueue') || className.includes('ArrayBlockingQueue')) return 'Queue'
+  if (className.includes('CountDownLatch')) return 'Latch'
+  if (className.includes('Semaphore')) return 'Semaphore'
+  if (className.includes('FutureTask') || className.includes('CompletableFuture')) return 'Future'
+  if (className.includes('ReentrantReadWriteLock')) return 'RWLock'
+  if (className.includes('ReentrantLock') || className.includes('NonfairSync') || className.includes('FairSync')) return 'Lock'
+  if (className.includes('AbstractQueuedSynchronizer') || className.includes('AbstractOwnableSynchronizer')) return 'AQS'
+  return 'Monitor'
+}
+
 function getLockActionsForFrame(thread: ThreadInfo, frameIdx: number): LockAction[] {
   return thread.lockActions.filter(la => la.frameIndex === frameIdx)
 }
@@ -251,7 +351,8 @@ function getLockActionCssClass(lock: LockAction): string {
   }
 }
 
-function getStateBadgeClass(state: ThreadState): string {
+function getStateBadgeClass(state: ThreadState | null): string {
+  if (!state) return ''
   const map: Record<string, string> = {
     BLOCKED: 'state-pulse-danger',
     RUNNABLE: '',
@@ -349,7 +450,12 @@ function getStateBadgeClass(state: ThreadState): string {
               >{{ getHolderDisplay(lock.lockClassName).tag }}</span>
             </span>
             <span class="col-holder mono">
-              <span v-if="lock.holderThreadName" class="holder-name">{{ lock.holderThreadName }}</span>
+              <span
+                v-if="lock.holderThreadName"
+                class="holder-name holder-link"
+                @click.stop="navigateToThread(lock.holderThreadName!)"
+                :title="'Click to view thread: ' + lock.holderThreadName"
+              >{{ lock.holderThreadName }}</span>
               <span v-else class="holder-na">N/A</span>
             </span>
             <span class="col-waiters">
@@ -400,7 +506,12 @@ function getStateBadgeClass(state: ThreadState): string {
                   </div>
                   <div class="meta-item">
                     <span class="meta-label">Holder</span>
-                    <span v-if="lock.holderThreadName" class="meta-value mono meta-value--holder">
+                    <span
+                      v-if="lock.holderThreadName"
+                      class="meta-value mono meta-value--holder holder-link"
+                      @click.stop="navigateToThread(lock.holderThreadName!)"
+                      :title="'Click to view thread: ' + lock.holderThreadName"
+                    >
                       {{ lock.holderThreadName }}
                     </span>
                     <span v-else class="meta-value meta-value--no-holder">N/A</span>
@@ -424,14 +535,13 @@ function getStateBadgeClass(state: ThreadState): string {
 
                 <div class="thread-list">
                   <div
-                    v-for="tName in lock.waitingThreadNames"
+                    v-for="tName in getVisibleThreadNames(lock.lockAddress, lock.waitingThreadNames)"
                     :key="tName"
                     class="thread-row"
                     :class="{ 'thread-row--expanded': isThreadExpanded(lock.lockAddress, tName) }"
                   >
-                    <!-- ── Thread Row Header (matches ThreadExplorer exactly) ── -->
+                    <!-- ── Thread Row Header ── -->
                     <div class="thread-row-header" @click.stop="toggleThread(lock.lockAddress, tName)">
-                      <!-- Expand arrow -->
                       <span class="expand-icon">
                         <svg class="expand-arrow" :class="{ 'expand-arrow--open': isThreadExpanded(lock.lockAddress, tName) }"
                              width="10" height="10" viewBox="0 0 12 12">
@@ -439,41 +549,39 @@ function getStateBadgeClass(state: ThreadState): string {
                         </svg>
                       </span>
 
-                      <!-- State badge (pill, colored text on subtle bg) -->
+                      <!-- State badge — from summary or full cache -->
                       <span
-                        v-if="threadCache[tName]"
+                        v-if="hasAnySummary(tName)"
                         class="state-badge"
-                        :class="getStateBadgeClass(threadCache[tName].state)"
+                        :class="getStateBadgeClass(getDisplayState(tName)!)"
                         :style="{
-                          background: (STATE_COLORS[threadCache[tName].state] || '#9ca3af') + '18',
-                          color: STATE_COLORS[threadCache[tName].state] || '#9ca3af',
-                          borderColor: (STATE_COLORS[threadCache[tName].state] || '#9ca3af') + '30',
+                          background: (STATE_COLORS[getDisplayState(tName)!] || '#9ca3af') + '18',
+                          color: STATE_COLORS[getDisplayState(tName)!] || '#9ca3af',
+                          borderColor: (STATE_COLORS[getDisplayState(tName)!] || '#9ca3af') + '30',
                         }"
                       >
-                        {{ STATE_LABELS[threadCache[tName].state] || threadCache[tName].state }}
+                        {{ STATE_LABELS[getDisplayState(tName)!] || getDisplayState(tName) }}
                       </span>
-                      <span v-else-if="!threadLoading.has(tName)" class="state-badge state-badge--pending">
+                      <span v-else-if="!isThreadDataLoading(tName)" class="state-badge state-badge--pending">
                         ...
                       </span>
 
-                      <!-- Thread name -->
                       <span class="thread-name mono">{{ tName }}</span>
 
-                      <!-- Stack depth badge: "N frames" -->
+                      <!-- Stack depth badge — from summary or full cache -->
                       <span
-                        v-if="threadCache[tName]?.stackTrace?.length"
+                        v-if="getDisplayStackDepth(tName) > 0"
                         class="frames-badge mono"
                       >
                         <svg class="frames-icon" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
                           <line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="10" y2="12"/>
                         </svg>
-                        {{ threadCache[tName].stackTrace.length }} frames
+                        {{ getDisplayStackDepth(tName) }} frames
                       </span>
 
-                      <!-- Daemon tag -->
-                      <span v-if="threadCache[tName]?.daemon" class="daemon-tag">daemon</span>
+                      <span v-if="getDisplayDaemon(tName)" class="daemon-tag">daemon</span>
 
-                      <!-- nid -->
+                      <!-- nid — only available from full cache -->
                       <span
                         v-if="threadCache[tName]"
                         class="thread-nid mono"
@@ -482,9 +590,8 @@ function getStateBadgeClass(state: ThreadState): string {
                         nid={{ threadCache[tName].nid }}
                       </span>
 
-                      <!-- Lock icon -->
                       <span
-                        v-if="threadCache[tName]?.lockActions?.some((a: any) => a.lockAddress)"
+                        v-if="getDisplayHasLockActions(tName)"
                         class="lock-icon"
                         title="Has lock activity"
                       >
@@ -494,15 +601,13 @@ function getStateBadgeClass(state: ThreadState): string {
                         </svg>
                       </span>
 
-                      <!-- Loading indicator -->
-                      <span v-if="threadLoading.has(tName)" class="thread-loading">
+                      <span v-if="isThreadDataLoading(tName)" class="thread-loading">
                         <span class="loading-spinner"></span>
                       </span>
                     </div>
 
-                    <!-- ── Thread Expanded Detail (same layout as ThreadExplorer) ── -->
+                    <!-- ── Thread Expanded Detail ── -->
                     <div v-if="isThreadExpanded(lock.lockAddress, tName) && threadCache[tName]" class="thread-detail thread-expand-enter">
-                      <!-- Meta Info -->
                       <div class="detail-meta">
                         <span><b>Thread #:</b> {{ threadCache[tName].threadNumber }}</span>
                         <span><b>Priority:</b> {{ threadCache[tName].priority }}</span>
@@ -514,7 +619,6 @@ function getStateBadgeClass(state: ThreadState): string {
                         <span v-if="threadCache[tName].stateDetail"><b>Detail:</b> {{ threadCache[tName].stateDetail }}</span>
                       </div>
 
-                      <!-- Stack Trace with inline lock actions -->
                       <div v-if="threadCache[tName].stackTrace?.length" class="stack-trace">
                         <div class="stack-header">Stack Trace ({{ threadCache[tName].stackTrace.length }} frames)</div>
 
@@ -527,21 +631,29 @@ function getStateBadgeClass(state: ThreadState): string {
                             <span class="frame-class">{{ frame.className }}</span>.<span class="frame-method">{{ frame.methodName }}</span>(<span class="frame-source">{{ frame.source }}</span>)
                           </div>
 
-                          <!-- Lock actions associated with this frame -->
                           <div
                             v-for="(la, laIdx) in getLockActionsForFrame(threadCache[tName], fIdx)"
                             :key="'lock-' + fIdx + '-' + laIdx"
                             class="lock-action mono"
-                            :class="getLockActionCssClass(la)"
+                            :class="[getLockActionCssClass(la), { 'lock-action--contention': getLockContentionInfo(la)?.waitingThreadNames?.length }]"
                           >
                             <span class="lock-type">{{ getLockActionLabel(la) }}</span>
                             &lt;<span class="lock-addr">{{ la.lockAddress }}</span>&gt;
                             (a {{ la.lockClassName }})
+                            <template v-if="getLockContentionInfo(la)?.waitingThreadNames?.length">
+                              <span class="lock-contention-badge">
+                                <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                                  <path d="M8 1.5L14.5 13H1.5L8 1.5Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                                  <path d="M8 6v3.5M8 11h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                                </svg>
+                                {{ getLockTypeTag(la.lockClassName) }}
+                                · 阻塞 {{ getLockContentionInfo(la)!.waitingThreadNames.length }} 个线程
+                              </span>
+                            </template>
                           </div>
                         </template>
                       </div>
 
-                      <!-- Ownable Synchronizers -->
                       <div v-if="threadCache[tName].ownableSynchronizers?.length" class="ownable-sync">
                         <div class="sync-header">Locked Ownable Synchronizers:</div>
                         <div v-for="(s, sIdx) in threadCache[tName].ownableSynchronizers" :key="sIdx" class="sync-entry mono">
@@ -550,11 +662,20 @@ function getStateBadgeClass(state: ThreadState): string {
                       </div>
                     </div>
 
-                    <!-- Loading placeholder -->
+                    <!-- Loading placeholder (only when expanding for full detail) -->
                     <div v-if="isThreadExpanded(lock.lockAddress, tName) && !threadCache[tName] && threadLoading.has(tName)" class="thread-loading-placeholder">
                       <span class="loading-spinner"></span>
                       <span>Loading thread info...</span>
                     </div>
+                  </div>
+
+                  <!-- Progressive rendering indicator -->
+                  <div
+                    v-if="(renderLimits[lock.lockAddress] ?? RENDER_CHUNK) < lock.waitingThreadNames.length"
+                    class="render-progress"
+                  >
+                    <span class="loading-spinner"></span>
+                    <span>Rendering {{ renderLimits[lock.lockAddress] ?? RENDER_CHUNK }} / {{ lock.waitingThreadNames.length }} threads...</span>
                   </div>
                 </div>
               </div>
@@ -839,6 +960,21 @@ function getStateBadgeClass(state: ThreadState): string {
   font-weight: 500;
 }
 
+.holder-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  text-decoration-color: rgba(22, 163, 106, 0.4);
+  transition: all var(--ts-transition);
+}
+
+.holder-link:hover {
+  color: var(--ts-accent);
+  text-decoration-style: solid;
+  text-decoration-color: var(--ts-accent);
+}
+
 .holder-na {
   color: var(--ts-text-muted);
 }
@@ -1009,6 +1145,8 @@ function getStateBadgeClass(state: ThreadState): string {
 
 .thread-row {
   background: var(--ts-bg-secondary);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 38px;
 }
 
 .thread-row:first-child {
@@ -1203,6 +1341,34 @@ function getStateBadgeClass(state: ThreadState): string {
   text-underline-offset: 2px;
 }
 
+.lock-contention-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 8px;
+  margin-left: 6px;
+  border-radius: var(--ts-radius-full);
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  white-space: nowrap;
+  font-family: var(--ts-font-ui);
+  letter-spacing: 0.2px;
+  line-height: 1.5;
+}
+
+.lock-contention-badge svg {
+  flex-shrink: 0;
+}
+
+.lock-action--contention.lock-action--held {
+  background: #fefce8;
+  border-left-color: #dc2626;
+  border-left-width: 3px;
+}
+
 .lock-action--held { border-left: 2px solid #16a34a; }
 .lock-action--blocked { border-left: 2px solid #dc2626; background: #fef2f2; }
 .lock-action--parking { border-left: 2px solid #d97706; }
@@ -1224,6 +1390,18 @@ function getStateBadgeClass(state: ThreadState): string {
   font-size: 12px;
   color: var(--ts-text-secondary);
   padding: 1px 0;
+}
+
+/* ── Render Progress Indicator ── */
+.render-progress {
+  padding: var(--ts-space-sm) var(--ts-space-md);
+  font-size: var(--ts-font-size-xs);
+  color: var(--ts-text-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--ts-space-sm);
+  background: var(--ts-bg-secondary);
+  justify-content: center;
 }
 
 /* ── Thread Loading Placeholder ── */
