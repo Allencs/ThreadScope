@@ -3,7 +3,6 @@ package com.threadscope.engine.analyzer;
 import com.threadscope.model.*;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * 锁关系图构建器 — 梳理"谁持有锁，谁等待锁"的全局图谱。
@@ -22,6 +21,7 @@ public class LockGraphBuilder {
         Map<String, String> lockHolders = new HashMap<>();              // lockAddr → holderThread
         Map<String, List<String>> lockWaiters = new HashMap<>();        // lockAddr → all waiting threads
         Map<String, List<String>> blockedWaiters = new HashMap<>();     // lockAddr → only BLOCKED (WaitingToLock) threads
+        Map<String, Set<String>> waitingOnPerLock = new HashMap<>();    // lockAddr → threads doing Object.wait()
 
         for (ThreadInfo thread : threads) {
             for (LockAction action : thread.lockActions()) {
@@ -43,9 +43,12 @@ public class LockGraphBuilder {
                         lockWaiters.computeIfAbsent(parking.lockAddress(), k -> new ArrayList<>())
                                    .add(thread.name());
 
-                    case LockAction.WaitingOn waitingOn ->
+                    case LockAction.WaitingOn waitingOn -> {
                         lockWaiters.computeIfAbsent(waitingOn.lockAddress(), k -> new ArrayList<>())
                                    .add(thread.name());
+                        waitingOnPerLock.computeIfAbsent(waitingOn.lockAddress(), k -> new HashSet<>())
+                                        .add(thread.name());
+                    }
                 }
             }
 
@@ -56,6 +59,24 @@ public class LockGraphBuilder {
                 if (spaceIdx > 0) {
                     String addr = sync.substring(0, spaceIdx);
                     lockHolders.putIfAbsent(addr, thread.name());
+                }
+            }
+        }
+
+        // 1.5 修正 Object.wait() 模式:
+        // 当 holder 同时对同一把锁调用了 Object.wait()，说明 monitor 已被释放，应清除 holder 身份。
+        // 同时将该线程从 waiters 列表中移除（它只是在等待 notify，不是锁竞争）。
+        for (var it = lockHolders.entrySet().iterator(); it.hasNext(); ) {
+            var entry = it.next();
+            String addr = entry.getKey();
+            String holder = entry.getValue();
+            Set<String> waitOnSet = waitingOnPerLock.getOrDefault(addr, Set.of());
+            if (waitOnSet.contains(holder)) {
+                it.remove();
+                // 从 waiters 中也移除自等待的 holder（非竞争场景）
+                List<String> waiters = lockWaiters.get(addr);
+                if (waiters != null) {
+                    waiters.remove(holder);
                 }
             }
         }

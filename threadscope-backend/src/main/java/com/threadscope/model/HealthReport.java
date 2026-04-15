@@ -10,7 +10,7 @@ public record HealthReport(
     List<RiskItem> risks
 ) {
     public enum HealthLevel {
-        HEALTHY, WARNING, CRITICAL
+        HEALTHY, INFO, WARNING, CRITICAL
     }
 
     /**

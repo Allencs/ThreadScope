@@ -97,14 +97,14 @@ export interface StackAggregateGroup {
 
 export interface RiskItem {
   category: string
-  level: 'HEALTHY' | 'WARNING' | 'CRITICAL'
+  level: 'HEALTHY' | 'INFO' | 'WARNING' | 'CRITICAL'
   title: string
   description: string
   affectedThreads: string[]
 }
 
 export interface HealthReport {
-  overallLevel: 'HEALTHY' | 'WARNING' | 'CRITICAL'
+  overallLevel: 'HEALTHY' | 'INFO' | 'WARNING' | 'CRITICAL'
   risks: RiskItem[]
 }
 

@@ -82,15 +82,20 @@ const daemonEntries = computed(() => {
   ]
 })
 
-// ── Blocked risks — 仅 BLOCK_STORM 和 DEADLOCK ──
+// ── Blocked risks ──
+const BLOCKED_RISK_CATEGORIES = new Set(['BLOCK_STORM', 'DEADLOCK', 'HIGH_BLOCKED_RATIO', 'BLOCKED_THREADS'])
 const blockedRisks = computed(() => {
   const risks = store.overview?.healthReport?.risks ?? []
-  return risks.filter(r => r.category === 'BLOCK_STORM' || r.category === 'DEADLOCK')
+  return risks.filter(r => BLOCKED_RISK_CATEGORIES.has(r.category))
 })
+const activeRiskIdx = ref<number | null>(null)
+const activeRisk = computed(() => activeRiskIdx.value !== null ? blockedRisks.value[activeRiskIdx.value] : null)
+function openRiskModal(idx: number) { activeRiskIdx.value = idx }
+function closeRiskModal() { activeRiskIdx.value = null }
 
 const healthClass = computed(() => {
   const level = store.overview?.healthReport?.overallLevel
-  return { 'CRITICAL': 'health-critical', 'WARNING': 'health-warning', 'HEALTHY': 'health-healthy' }[level ?? 'HEALTHY']
+  return { 'CRITICAL': 'health-critical', 'WARNING': 'health-warning', 'INFO': 'health-info', 'HEALTHY': 'health-healthy' }[level ?? 'HEALTHY']
 })
 
 // ── Pie chart SVG helpers ──
@@ -408,34 +413,77 @@ const tabs = [
           :key="idx"
           class="risk-card"
           :class="'risk-card--' + risk.level.toLowerCase()"
+          @click="openRiskModal(idx)"
         >
           <div class="risk-card__header">
             <span class="risk-card__title">{{ risk.title }}</span>
             <span class="risk-card__badge mono">{{ risk.category }}</span>
           </div>
           <p class="risk-card__desc">{{ risk.description }}</p>
-          <a
-            v-if="extractLockAddress(risk.description)"
-            class="risk-card__lock-link mono"
-            href="#"
-            @click.prevent="navigateToLock(extractLockAddress(risk.description)!)"
-          >
-            {{ extractLockAddress(risk.description) }}
-            <span class="risk-card__arrow">→ View in Locks</span>
-          </a>
           <div v-if="risk.affectedThreads?.length" class="risk-card__threads">
-            <span
-              class="thread-pill thread-pill--clickable mono"
-              v-for="t in risk.affectedThreads.slice(0, 3)"
-              :key="t"
-              @click="navigateToThread(t)"
-              :title="'View ' + t + ' in Threads'"
-            >{{ t }}<span class="thread-pill__arrow">→</span></span>
+            <span class="thread-pill mono" v-for="t in risk.affectedThreads.slice(0, 3)" :key="t">{{ t }}</span>
             <span v-if="risk.affectedThreads.length > 3" class="thread-pill thread-pill--more">+{{ risk.affectedThreads.length - 3 }} more</span>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- ═══════ Risk Detail Modal ═══════ -->
+    <Teleport to="body">
+      <Transition name="modal-fade">
+        <div v-if="activeRisk" class="risk-modal-overlay" @click.self="closeRiskModal">
+          <div class="risk-modal" :class="'risk-modal--' + activeRisk.level.toLowerCase()">
+            <button class="risk-modal__close" @click="closeRiskModal" title="Close">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M18 6 6 18M6 6l12 12"/>
+              </svg>
+            </button>
+
+            <div class="risk-modal__top">
+              <span
+                class="risk-modal__level"
+                :class="'risk-modal__level--' + activeRisk.level.toLowerCase()"
+              >{{ activeRisk.level }}</span>
+              <span class="risk-modal__category mono">{{ activeRisk.category }}</span>
+            </div>
+
+            <h2 class="risk-modal__title">{{ activeRisk.title }}</h2>
+
+            <div class="risk-modal__section">
+              <h4 class="risk-modal__label">Description</h4>
+              <p class="risk-modal__desc">{{ activeRisk.description }}</p>
+            </div>
+
+            <a
+              v-if="extractLockAddress(activeRisk.description)"
+              class="risk-modal__lock-link mono"
+              href="#"
+              @click.prevent="navigateToLock(extractLockAddress(activeRisk.description)!); closeRiskModal()"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <rect x="4" y="7" width="8" height="7" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                <path d="M6 7V5a2 2 0 114 0v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+              </svg>
+              {{ extractLockAddress(activeRisk.description) }}
+              <span class="risk-modal__arrow">→ View in Locks</span>
+            </a>
+
+            <div v-if="activeRisk.affectedThreads?.length" class="risk-modal__section">
+              <h4 class="risk-modal__label">Affected Threads ({{ activeRisk.affectedThreads.length }})</h4>
+              <div class="risk-modal__thread-list">
+                <span
+                  class="thread-pill thread-pill--clickable mono"
+                  v-for="t in activeRisk.affectedThreads"
+                  :key="t"
+                  @click="navigateToThread(t); closeRiskModal()"
+                  :title="'View ' + t + ' in Threads'"
+                >{{ t }}<span class="thread-pill__arrow">→</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
   </div>
 </template>
@@ -872,6 +920,7 @@ function detectPool(threadName: string): string {
 
 .health-critical .health-badge { background: var(--ts-danger-light); color: var(--ts-danger); }
 .health-warning .health-badge  { background: var(--ts-warning-light); color: var(--ts-warning); }
+.health-info .health-badge     { background: #eff6ff; color: #2563eb; }
 .health-healthy .health-badge  { background: var(--ts-success-light); color: var(--ts-success); }
 
 .risk-grid {
@@ -885,12 +934,18 @@ function detectPool(threadName: string): string {
   border-left: 3px solid var(--ts-border-color);
   border-radius: var(--ts-radius-md);
   padding: var(--ts-space-md);
-  transition: box-shadow var(--ts-transition);
+  cursor: pointer;
+  transition: box-shadow var(--ts-transition), transform 0.15s ease;
 }
 
-.risk-card:hover { box-shadow: var(--ts-shadow-sm); }
+.risk-card:hover {
+  box-shadow: var(--ts-shadow-sm);
+  transform: translateY(-1px);
+}
+
 .risk-card--critical { border-left-color: var(--ts-danger); background: #fffbfb; }
 .risk-card--warning  { border-left-color: var(--ts-warning); background: #fffdf7; }
+.risk-card--info     { border-left-color: #2563eb; background: #f8faff; }
 
 .risk-card__header {
   display: flex;
@@ -928,6 +983,12 @@ function detectPool(threadName: string): string {
   background: #fffbeb;
   color: #d97706;
   border: 1px solid #fde68a;
+}
+
+.risk-card--info .risk-card__badge {
+  background: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #bfdbfe;
 }
 
 .risk-card__desc {
@@ -1037,5 +1098,178 @@ function detectPool(threadName: string): string {
   .tab-bar {
     overflow-x: auto;
   }
+}
+
+/* ══════════════════════════════════════
+   Risk Detail Modal
+   ══════════════════════════════════════ */
+.risk-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+  padding: 24px;
+}
+
+.risk-modal {
+  position: relative;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  width: 100%;
+  max-width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 28px 32px 24px;
+  border-top: 4px solid var(--ts-border-color);
+}
+
+.risk-modal--critical { border-top-color: var(--ts-danger); }
+.risk-modal--warning  { border-top-color: var(--ts-warning); }
+.risk-modal--info     { border-top-color: #2563eb; }
+
+.risk-modal__close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: var(--ts-bg-elevated);
+  border: 1px solid var(--ts-border-color);
+  border-radius: var(--ts-radius-full);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--ts-text-muted);
+  transition: all var(--ts-transition);
+}
+
+.risk-modal__close:hover {
+  background: #f3f4f6;
+  color: var(--ts-text-primary);
+}
+
+.risk-modal__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.risk-modal__level {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: var(--ts-radius-full);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.risk-modal__level--critical { background: #fef2f2; color: #dc2626; }
+.risk-modal__level--warning  { background: #fffbeb; color: #d97706; }
+.risk-modal__level--info     { background: #eff6ff; color: #2563eb; }
+
+.risk-modal__category {
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-bg-elevated);
+  color: var(--ts-text-muted);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.risk-modal__title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ts-text-primary);
+  margin: 0 0 20px 0;
+  line-height: 1.35;
+  padding-right: 32px;
+}
+
+.risk-modal__section {
+  margin-bottom: 16px;
+}
+
+.risk-modal__label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ts-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 8px 0;
+}
+
+.risk-modal__desc {
+  font-size: 14px;
+  color: var(--ts-text-secondary);
+  line-height: 1.7;
+  margin: 0;
+  word-break: break-word;
+}
+
+.risk-modal__lock-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 6px 12px;
+  font-size: var(--ts-font-size-sm);
+  color: var(--ts-accent);
+  background: var(--ts-accent-light);
+  border: 1px solid #dbeafe;
+  border-radius: var(--ts-radius-sm);
+  text-decoration: none;
+  transition: all var(--ts-transition);
+}
+
+.risk-modal__lock-link:hover {
+  background: #dbeafe;
+  border-color: var(--ts-accent);
+}
+
+.risk-modal__arrow {
+  font-size: 11px;
+  color: var(--ts-text-muted);
+}
+
+.risk-modal__thread-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Modal transitions */
+.modal-fade-enter-active {
+  transition: opacity 0.2s ease;
+}
+.modal-fade-enter-active .risk-modal {
+  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.modal-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.modal-fade-leave-active .risk-modal {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.modal-fade-enter-from {
+  opacity: 0;
+}
+.modal-fade-enter-from .risk-modal {
+  opacity: 0;
+  transform: scale(0.95) translateY(8px);
+}
+.modal-fade-leave-to {
+  opacity: 0;
+}
+.modal-fade-leave-to .risk-modal {
+  opacity: 0;
+  transform: scale(0.97) translateY(4px);
 }
 </style>

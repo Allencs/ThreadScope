@@ -86,10 +86,10 @@ public class HealthChecker {
                 risks.add(new RiskItem(
                     "BLOCK_STORM",
                     HealthLevel.WARNING,
-                    blockedWaiters + " 个线程因同一锁阻塞 (BLOCKED)",
-                    "锁 " + lock.lockAddress() + " (" + lock.lockClassName() + ") 被 " +
-                    lock.holderThreadName() + " 持有，导致 " + blockedWaiters +
-                    " 个线程处于 BLOCKED 状态。这通常表示该代码段存在严重的 synchronized 锁竞争。",
+                    blockedWaiters + " 个线程因同一把锁阻塞 (BLOCKED)",
+                    "锁 " + lock.lockAddress() + " (" + lock.lockClassName() + ") 目前由线程 \"" +
+                    lock.holderThreadName() + "\" 持有，导致高达 " + blockedWaiters +
+                    " 个其他线程在尝试获取该监视器锁时被阻塞。这通常表示相关代码段存在严重的 synchronized 锁竞争，可能成为系统的性能瓶颈。",
                     lock.blockedWaiterNames()
                 ));
             }
@@ -99,7 +99,12 @@ public class HealthChecker {
     private void checkBlockedRatio(List<ThreadInfo> threads, List<RiskItem> risks) {
         if (threads.isEmpty()) return;
 
-        long blockedCount = threads.stream().filter(t -> t.state() == ThreadState.BLOCKED).count();
+        List<ThreadInfo> blockedThreads = threads.stream()
+            .filter(t -> t.state() == ThreadState.BLOCKED)
+            .toList();
+        long blockedCount = blockedThreads.size();
+        if (blockedCount == 0) return;
+
         double ratio = (double) blockedCount / threads.size();
 
         if (ratio >= BLOCKED_RATIO_CRITICAL) {
@@ -107,18 +112,31 @@ public class HealthChecker {
                 "HIGH_BLOCKED_RATIO",
                 HealthLevel.CRITICAL,
                 String.format("%.1f%% 的线程处于 BLOCKED 状态", ratio * 100),
-                "大量线程被阻塞，系统吞吐量可能严重下降。请检查锁竞争和IO瓶颈。",
-                threads.stream().filter(t -> t.state() == ThreadState.BLOCKED)
-                       .map(ThreadInfo::name).limit(10).toList()
+                "系统中高达 " + String.format("%.1f%%", ratio * 100) + " 的线程被阻塞。大量线程处于 BLOCKED 状态将导致系统吞吐量严重下降，请优先排查可能存在的大范围热点锁竞争、底层 I/O 阻塞或连接池耗尽等瓶颈。",
+                blockedThreads.stream().map(ThreadInfo::name).limit(10).toList()
             ));
         } else if (ratio >= BLOCKED_RATIO_WARNING) {
             risks.add(new RiskItem(
                 "HIGH_BLOCKED_RATIO",
                 HealthLevel.WARNING,
                 String.format("%.1f%% 的线程处于 BLOCKED 状态", ratio * 100),
-                "BLOCKED线程比例偏高，建议关注锁竞争情况。",
-                threads.stream().filter(t -> t.state() == ThreadState.BLOCKED)
-                       .map(ThreadInfo::name).limit(10).toList()
+                "系统中处于 BLOCKED 状态的线程比例偏高 (" + String.format("%.1f%%", ratio * 100) + ")。这通常意味着存在较大范围的锁等待，建议关注热点对象的并发竞争或外部资源的调用耗时。",
+                blockedThreads.stream().map(ThreadInfo::name).limit(10).toList()
+            ));
+        } else {
+            String desc = blockedCount == 1
+                ? "线程 \"" + blockedThreads.getFirst().name() + "\" 当前为 BLOCKED 状态。" +
+                  "这通常是因为该线程正在等待获取 synchronized 监视器锁，或者是调用 Object.wait() 被唤醒后正在重新竞争锁资源。" +
+                  "在瞬态快照中，极少量的 BLOCKED 属于正常竞争，如果该线程长时间处于此状态，需排查锁持有者的耗时操作。"
+                : "当前有 " + blockedCount + " 个线程处于 BLOCKED 状态，占总线程数的 " + String.format("%.1f%%", ratio * 100) + "。" +
+                  "这表明系统存在一定程度的 synchronized 锁竞争，或部分线程从 wait() 状态唤醒后正在重新获取锁。" +
+                  "由于占比处于较低水平，暂不构成系统性风险，建议结合业务场景持续观察。";
+            risks.add(new RiskItem(
+                "BLOCKED_THREADS",
+                HealthLevel.INFO,
+                blockedCount + " 个线程处于 BLOCKED 状态",
+                desc,
+                blockedThreads.stream().map(ThreadInfo::name).limit(10).toList()
             ));
         }
     }
