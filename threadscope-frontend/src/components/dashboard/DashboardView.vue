@@ -99,17 +99,134 @@ const healthClass = computed(() => {
 })
 
 // ── Pie chart SVG helpers ──
-function pieArcs(entries: { count: number; color: string }[], total: number, radius: number) {
+// 改用 SVG <path> arc 命令绘制弧段：精确控制每段起止角度，
+// 避免 stroke-dasharray 在浮点边界/抗锯齿处出现接缝缝隙。
+const MIN_HIT_ANGLE = 6        // 最小命中弧角度（度），保证极小段（如 0.2%）也可悬停
+const ARC_OVERLAP_DEG = 0.3    // 相邻弧段之间的微小重叠角度，消除像素接缝
+const SVG_CX = 100
+const SVG_CY = 100
+
+interface ArcData {
+  d: string
+  hitD: string
+  color: string
+  count: number
+  pct: number
+  label: string
+  state?: ThreadState
+  idx: number
+  sweepDeg: number
+}
+
+function polarPoint(cx: number, cy: number, r: number, angleDeg: number): [number, number] {
+  // 0° 在 12 点方向，顺时针递增
+  const rad = ((angleDeg - 90) * Math.PI) / 180
+  return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)]
+}
+
+function describeArc(cx: number, cy: number, r: number, startDeg: number, endDeg: number): string {
+  const sweep = endDeg - startDeg
+  // 接近整圆时 SVG arc 会退化（起止点重合无法绘制），用两段半圆代替
+  if (sweep >= 360 - 0.01) {
+    const [x1, y1] = polarPoint(cx, cy, r, startDeg)
+    const [xm, ym] = polarPoint(cx, cy, r, startDeg + 180)
+    return `M ${x1} ${y1} A ${r} ${r} 0 1 1 ${xm} ${ym} A ${r} ${r} 0 1 1 ${x1} ${y1}`
+  }
+  const [sx, sy] = polarPoint(cx, cy, r, startDeg)
+  const [ex, ey] = polarPoint(cx, cy, r, endDeg)
+  const largeArc = sweep > 180 ? 1 : 0
+  return `M ${sx} ${sy} A ${r} ${r} 0 ${largeArc} 1 ${ex} ${ey}`
+}
+
+function pieArcs(
+  entries: { count: number; color: string; label?: string; state?: ThreadState }[],
+  total: number,
+  radius: number,
+): ArcData[] {
   if (total === 0) return []
-  const circumference = 2 * Math.PI * radius
   let accumulated = 0
-  return entries.map(e => {
+  return entries.map((e, idx) => {
     const pct = e.count / total
-    const dash = pct * circumference
-    const offset = -accumulated * circumference + circumference * 0.25 // start from top
+    const rawStart = accumulated * 360
+    const rawEnd = (accumulated + pct) * 360
     accumulated += pct
-    return { ...e, dashArray: `${dash} ${circumference}`, dashOffset: offset }
+
+    // 可见弧：向两侧各扩展 ARC_OVERLAP_DEG/2，相邻段重叠避免接缝灰线
+    const visStart = rawStart - ARC_OVERLAP_DEG / 2
+    const visEnd = rawEnd + ARC_OVERLAP_DEG / 2
+    const visSweep = visEnd - visStart
+
+    // 命中弧：保证最小角度，相对可见弧居中
+    const hitSweep = Math.max(visSweep, MIN_HIT_ANGLE)
+    const hitStart = visStart - (hitSweep - visSweep) / 2
+    const hitEnd = visEnd + (hitSweep - visSweep) / 2
+
+    return {
+      d: describeArc(SVG_CX, SVG_CY, radius, visStart, visEnd),
+      hitD: describeArc(SVG_CX, SVG_CY, radius, hitStart, hitEnd),
+      color: e.color,
+      count: e.count,
+      pct,
+      label: e.label ?? '',
+      state: e.state,
+      idx,
+      sweepDeg: pct * 360,
+    }
   })
+}
+
+// 命中层渲染顺序：弧角度越小越靠后渲染 → 在 SVG 中处于上层，优先接收 pointer 事件
+function hitArcsOrdered(arcs: ArcData[]): ArcData[] {
+  return [...arcs].sort((a, b) => b.sweepDeg - a.sweepDeg)
+}
+
+// ── Donut hover tooltip ──
+interface DonutTooltip {
+  visible: boolean
+  x: number
+  y: number
+  label: string
+  count: number
+  pct: number
+  color: string
+}
+const donutTooltip = ref<DonutTooltip>({
+  visible: false,
+  x: 0,
+  y: 0,
+  label: '',
+  count: 0,
+  pct: 0,
+  color: '#000',
+})
+const hoveredArcKey = ref<string | null>(null)
+
+function showArcTooltip(
+  ev: MouseEvent,
+  key: string,
+  data: { label: string; count: number; pct: number; color: string },
+) {
+  hoveredArcKey.value = key
+  donutTooltip.value = {
+    visible: true,
+    x: ev.clientX,
+    y: ev.clientY,
+    label: data.label,
+    count: data.count,
+    pct: data.pct,
+    color: data.color,
+  }
+}
+
+function moveArcTooltip(ev: MouseEvent) {
+  if (!donutTooltip.value.visible) return
+  donutTooltip.value.x = ev.clientX
+  donutTooltip.value.y = ev.clientY
+}
+
+function hideArcTooltip() {
+  hoveredArcKey.value = null
+  donutTooltip.value.visible = false
 }
 
 // ── Navigation ──
@@ -161,20 +278,33 @@ const tabs = [
         <div class="chart-block chart-block--main">
           <div class="chart-label">Thread State Distribution</div>
           <div class="chart-row">
-            <div class="donut-container donut-container--large">
+            <div class="donut-container donut-container--large" @mouseleave="hideArcTooltip">
               <svg viewBox="0 0 200 200">
                 <circle cx="100" cy="100" r="70" fill="none" stroke="#f0f2f5" stroke-width="24"/>
-                <circle
-                  v-for="(arc, i) in pieArcs(stateEntries, totalThreads, 70)"
-                  :key="i"
-                  cx="100" cy="100" r="70"
+                <!-- 可见弧层 -->
+                <path
+                  v-for="arc in pieArcs(stateEntries, totalThreads, 70)"
+                  :key="'state-vis-' + arc.idx"
+                  class="donut-arc"
+                  :class="{ 'donut-arc--dim': hoveredArcKey !== null && hoveredArcKey !== 'state-' + arc.idx }"
                   fill="none"
                   :stroke="arc.color"
                   stroke-width="24"
-                  :stroke-dasharray="arc.dashArray"
-                  :stroke-dashoffset="arc.dashOffset"
                   stroke-linecap="butt"
-                  style="transition: stroke-dasharray 0.6s ease"
+                  :d="arc.d"
+                />
+                <!-- 透明命中层（始终在最上层；小弧段排序靠后，优先获得 hover） -->
+                <path
+                  v-for="arc in hitArcsOrdered(pieArcs(stateEntries, totalThreads, 70))"
+                  :key="'state-hit-' + arc.idx"
+                  class="donut-hit"
+                  fill="none"
+                  stroke="transparent"
+                  stroke-width="32"
+                  stroke-linecap="butt"
+                  :d="arc.hitD"
+                  @mouseenter="showArcTooltip($event, 'state-' + arc.idx, { label: arc.label, count: arc.count, pct: arc.pct, color: arc.color })"
+                  @mousemove="moveArcTooltip"
                 />
               </svg>
               <div class="donut-center">
@@ -197,23 +327,37 @@ const tabs = [
         <div class="chart-block">
           <div class="chart-label">Daemon Threads</div>
           <div class="chart-row">
-            <div class="donut-container donut-container--medium">
+            <div class="donut-container donut-container--large" @mouseleave="hideArcTooltip">
               <svg viewBox="0 0 200 200">
                 <circle cx="100" cy="100" r="70" fill="none" stroke="#f0f2f5" stroke-width="24"/>
-                <circle
-                  v-for="(arc, i) in pieArcs(daemonEntries, totalThreads, 70)"
-                  :key="i"
-                  cx="100" cy="100" r="70"
+                <!-- 可见弧层 -->
+                <path
+                  v-for="arc in pieArcs(daemonEntries, totalThreads, 70)"
+                  :key="'daemon-vis-' + arc.idx"
+                  class="donut-arc"
+                  :class="{ 'donut-arc--dim': hoveredArcKey !== null && hoveredArcKey !== 'daemon-' + arc.idx }"
                   fill="none"
                   :stroke="arc.color"
                   stroke-width="24"
-                  :stroke-dasharray="arc.dashArray"
-                  :stroke-dashoffset="arc.dashOffset"
                   stroke-linecap="butt"
+                  :d="arc.d"
+                />
+                <!-- 透明命中层 -->
+                <path
+                  v-for="arc in hitArcsOrdered(pieArcs(daemonEntries, totalThreads, 70))"
+                  :key="'daemon-hit-' + arc.idx"
+                  class="donut-hit"
+                  fill="none"
+                  stroke="transparent"
+                  stroke-width="32"
+                  stroke-linecap="butt"
+                  :d="arc.hitD"
+                  @mouseenter="showArcTooltip($event, 'daemon-' + arc.idx, { label: arc.label, count: arc.count, pct: arc.pct, color: arc.color })"
+                  @mousemove="moveArcTooltip"
                 />
               </svg>
               <div class="donut-center">
-                <span class="donut-center__value donut-center__value--sm mono">{{ store.overview?.daemonCount ?? 0 }}</span>
+                <span class="donut-center__value mono">{{ store.overview?.daemonCount ?? 0 }}</span>
                 <span class="donut-center__label">daemon</span>
               </div>
             </div>
@@ -428,6 +572,30 @@ const tabs = [
       </div>
     </div>
 
+    <!-- ═══════ Donut Hover Tooltip ═══════ -->
+    <Teleport to="body">
+      <Transition name="tooltip-fade">
+        <div
+          v-if="donutTooltip.visible"
+          class="donut-tooltip"
+          :style="{
+            left: donutTooltip.x + 'px',
+            top: donutTooltip.y + 'px',
+          }"
+        >
+          <div class="donut-tooltip__row">
+            <span class="donut-tooltip__dot" :style="{ background: donutTooltip.color }"></span>
+            <span class="donut-tooltip__label">{{ donutTooltip.label }}</span>
+          </div>
+          <div class="donut-tooltip__stats">
+            <span class="donut-tooltip__count mono">{{ donutTooltip.count }}</span>
+            <span class="donut-tooltip__sep">·</span>
+            <span class="donut-tooltip__pct mono">{{ (donutTooltip.pct * 100).toFixed(2) }}%</span>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
     <!-- ═══════ Risk Detail Modal ═══════ -->
     <Teleport to="body">
       <Transition name="modal-fade">
@@ -575,13 +743,30 @@ function detectPool(threadName: string): string {
 }
 
 .donut-container--medium {
-  width: 120px;
-  height: 120px;
+  width: 160px;
+  height: 160px;
 }
 
 .donut-container svg {
   width: 100%;
   height: 100%;
+  overflow: visible;
+}
+
+/* ── Donut arc hover ── */
+.donut-arc {
+  transition: opacity 0.18s ease, stroke-width 0.18s ease;
+  pointer-events: none; /* 由透明命中层负责 hover */
+}
+
+.donut-arc--dim {
+  opacity: 0.35;
+}
+
+/* 透明命中层：仅 stroke 区域响应鼠标事件，即使 stroke=transparent 也生效 */
+.donut-hit {
+  pointer-events: stroke;
+  cursor: pointer;
 }
 
 .donut-center {
@@ -599,10 +784,6 @@ function detectPool(threadName: string): string {
   font-weight: 700;
   color: var(--ts-text-primary);
   line-height: 1;
-}
-
-.donut-center__value--sm {
-  font-size: 17px;
 }
 
 .donut-center__label {
@@ -1271,5 +1452,73 @@ function detectPool(threadName: string): string {
 .modal-fade-leave-to .risk-modal {
   opacity: 0;
   transform: scale(0.97) translateY(4px);
+}
+
+/* ══════════════════════════════════════
+   Donut Hover Tooltip
+   ══════════════════════════════════════ */
+.donut-tooltip {
+  position: fixed;
+  z-index: 9500;
+  transform: translate(14px, -50%);
+  pointer-events: none;
+  background: rgba(17, 24, 39, 0.95);
+  color: #ffffff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  min-width: 132px;
+  backdrop-filter: blur(6px);
+}
+
+.donut-tooltip__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.donut-tooltip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.donut-tooltip__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: #e5e7eb;
+}
+
+.donut-tooltip__stats {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.donut-tooltip__count {
+  color: #ffffff;
+}
+
+.donut-tooltip__sep {
+  color: #6b7280;
+}
+
+.donut-tooltip__pct {
+  color: #93c5fd;
+}
+
+.tooltip-fade-enter-active,
+.tooltip-fade-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.tooltip-fade-enter-from,
+.tooltip-fade-leave-to {
+  opacity: 0;
 }
 </style>
