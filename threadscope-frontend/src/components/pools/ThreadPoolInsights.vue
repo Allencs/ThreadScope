@@ -13,6 +13,32 @@ import { useAnalysisStore } from '@/stores/analysisStore'
 import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo } from '@/types'
 import * as api from '@/api/threadscope'
 
+interface PoolTooltipEntry {
+  state: ThreadState
+  label: string
+  color: string
+  count: number
+  pct: number
+}
+
+interface PoolTooltipState {
+  visible: boolean
+  x: number
+  y: number
+  poolName: string
+  total: number
+  entries: PoolTooltipEntry[]
+}
+
+const poolTooltip = ref<PoolTooltipState>({
+  visible: false,
+  x: 0,
+  y: 0,
+  poolName: '',
+  total: 0,
+  entries: [],
+})
+
 const route = useRoute()
 const router = useRouter()
 const store = useAnalysisStore()
@@ -94,6 +120,57 @@ function getStateBadgeStyle(state: ThreadState) {
 function getStateBadgeClass(state: ThreadState): string {
   return state === 'BLOCKED' ? 'state-pulse-danger' : ''
 }
+
+// ── Pool mini-bar hover tooltip ──
+const STATE_ORDER: ThreadState[] = [
+  'RUNNABLE',
+  'BLOCKED',
+  'WAITING',
+  'TIMED_WAITING',
+  'NEW',
+  'TERMINATED',
+  'UNKNOWN',
+]
+
+function buildTooltipEntries(
+  distribution: Record<string, number>,
+  total: number,
+): PoolTooltipEntry[] {
+  const entries: PoolTooltipEntry[] = []
+  for (const state of STATE_ORDER) {
+    const count = distribution[state] ?? 0
+    if (count <= 0) continue
+    entries.push({
+      state,
+      label: STATE_LABELS[state],
+      color: STATE_COLORS[state],
+      count,
+      pct: total > 0 ? count / total : 0,
+    })
+  }
+  return entries
+}
+
+function showPoolTooltip(ev: MouseEvent, pool: { poolName: string; totalThreads: number; stateDistribution: Record<string, number> }) {
+  poolTooltip.value = {
+    visible: true,
+    x: ev.clientX,
+    y: ev.clientY,
+    poolName: pool.poolName,
+    total: pool.totalThreads,
+    entries: buildTooltipEntries(pool.stateDistribution, pool.totalThreads),
+  }
+}
+
+function movePoolTooltip(ev: MouseEvent) {
+  if (!poolTooltip.value.visible) return
+  poolTooltip.value.x = ev.clientX
+  poolTooltip.value.y = ev.clientY
+}
+
+function hidePoolTooltip() {
+  poolTooltip.value.visible = false
+}
 </script>
 
 <template>
@@ -146,7 +223,12 @@ function getStateBadgeClass(state: ThreadState): string {
           <span class="pool-type-tag">{{ pool.poolType }}</span>
 
           <!-- State distribution mini bar -->
-          <div class="pool-mini-bar">
+          <div
+            class="pool-mini-bar"
+            @mouseenter="showPoolTooltip($event, pool)"
+            @mousemove="movePoolTooltip"
+            @mouseleave="hidePoolTooltip"
+          >
             <div
               v-for="(count, state) in pool.stateDistribution"
               :key="state"
@@ -155,7 +237,6 @@ function getStateBadgeClass(state: ThreadState): string {
                 width: getBarWidth(count as number, pool.totalThreads),
                 background: STATE_COLORS[state as ThreadState]
               }"
-              :title="`${state}: ${count}`"
             ></div>
           </div>
 
@@ -261,6 +342,37 @@ function getStateBadgeClass(state: ThreadState): string {
       <p>No pools matching "<span class="mono">{{ searchQuery }}</span>"</p>
       <button class="clear-btn" @click="clearSearch">Clear search</button>
     </div>
+
+    <!-- Pool mini-bar hover tooltip (shared) -->
+    <Transition name="pool-tooltip-fade">
+      <div
+        v-if="poolTooltip.visible"
+        class="pool-tooltip"
+        :style="{
+          left: poolTooltip.x + 'px',
+          top: poolTooltip.y + 'px',
+        }"
+      >
+        <div class="pool-tooltip__header">
+          <span class="pool-tooltip__title mono">{{ poolTooltip.poolName }}</span>
+          <span class="pool-tooltip__total mono">{{ poolTooltip.total }} threads</span>
+        </div>
+        <div class="pool-tooltip__divider"></div>
+        <div class="pool-tooltip__list">
+          <div
+            v-for="entry in poolTooltip.entries"
+            :key="entry.state"
+            class="pool-tooltip__item"
+          >
+            <span class="pool-tooltip__dot" :style="{ background: entry.color }"></span>
+            <span class="pool-tooltip__label">{{ entry.label }}</span>
+            <span class="pool-tooltip__count mono">{{ entry.count }}</span>
+            <span class="pool-tooltip__sep">·</span>
+            <span class="pool-tooltip__pct mono">{{ (entry.pct * 100).toFixed(1) }}%</span>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -627,5 +739,110 @@ function getStateBadgeClass(state: ThreadState): string {
 .clear-btn:hover {
   background: var(--ts-accent);
   color: #fff;
+}
+
+/* ══════════════════════════════════════
+   Pool Mini-bar Hover Tooltip
+   (style aligned with Analysis Overview donut tooltip)
+   ══════════════════════════════════════ */
+.pool-tooltip {
+  position: fixed;
+  z-index: 9500;
+  transform: translate(14px, -50%);
+  pointer-events: none;
+  background: rgba(17, 24, 39, 0.96);
+  color: #ffffff;
+  padding: 10px 12px;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  min-width: 200px;
+  max-width: 320px;
+  backdrop-filter: blur(6px);
+}
+
+.pool-tooltip__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.pool-tooltip__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.pool-tooltip__total {
+  font-size: 11px;
+  color: #93c5fd;
+  flex-shrink: 0;
+}
+
+.pool-tooltip__divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 0 -12px 6px;
+}
+
+.pool-tooltip__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pool-tooltip__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pool-tooltip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pool-tooltip__label {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: #e5e7eb;
+}
+
+.pool-tooltip__count {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.pool-tooltip__sep {
+  color: #6b7280;
+}
+
+.pool-tooltip__pct {
+  font-size: 11px;
+  color: #93c5fd;
+  min-width: 38px;
+  text-align: right;
+}
+
+.pool-tooltip-fade-enter-active,
+.pool-tooltip-fade-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.pool-tooltip-fade-enter-from,
+.pool-tooltip-fade-leave-to {
+  opacity: 0;
 }
 </style>

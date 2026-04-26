@@ -92,6 +92,11 @@ function loadPage(page: number) {
 
 const totalPages = computed(() => Math.ceil(store.threadTotal / pageSize))
 
+const isFiltered = computed(() =>
+  !!store.searchQuery.trim() || store.stateFilter.length > 0
+)
+const overallTotal = computed(() => store.overview?.totalThreads ?? store.threadTotal)
+
 function getStateBadgeClass(state: ThreadState): string {
   const map: Record<string, string> = {
     BLOCKED: 'state-pulse-danger',
@@ -274,7 +279,25 @@ function getLockTypeLabel(className: string): { tag: string; detail: string } {
         Stack Depth
       </button>
 
-      <span class="thread-count mono">{{ store.threadTotal }} threads</span>
+      <div
+        class="thread-count-badge"
+        :class="{ 'thread-count-badge--filtered': isFiltered }"
+        :title="isFiltered
+          ? `${store.threadTotal} matched of ${overallTotal} total threads`
+          : `${store.threadTotal} threads`"
+      >
+        <svg class="thread-count-badge__icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="3" y1="4" x2="13" y2="4"/>
+          <line x1="3" y1="8" x2="13" y2="8"/>
+          <line x1="3" y1="12" x2="13" y2="12"/>
+        </svg>
+        <span class="thread-count-badge__value mono">{{ store.threadTotal }}</span>
+        <template v-if="isFiltered && overallTotal > store.threadTotal">
+          <span class="thread-count-badge__sep">/</span>
+          <span class="thread-count-badge__total mono">{{ overallTotal }}</span>
+        </template>
+        <span class="thread-count-badge__label">threads</span>
+      </div>
     </div>
 
     <!-- Thread List -->
@@ -585,10 +608,78 @@ function getLockTypeLabel(className: string): { tag: string; detail: string } {
   background: var(--state-color);
 }
 
-.thread-count {
-  color: var(--ts-text-muted);
+.thread-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--ts-accent-light);
+  border-radius: var(--ts-radius-full);
+  background: linear-gradient(180deg, #ffffff 0%, var(--ts-accent-light) 140%);
+  color: var(--ts-accent);
   font-size: var(--ts-font-size-sm);
   white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.06);
+  transition: box-shadow var(--ts-transition), transform var(--ts-transition);
+}
+
+.thread-count-badge:hover {
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15);
+  transform: translateY(-1px);
+}
+
+.thread-count-badge__icon {
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.thread-count-badge__value {
+  font-size: var(--ts-font-size-md);
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  line-height: 1;
+}
+
+.thread-count-badge__sep {
+  color: var(--ts-text-muted);
+  font-weight: 400;
+  margin: 0 -2px;
+}
+
+.thread-count-badge__total {
+  font-size: var(--ts-font-size-sm);
+  font-weight: 500;
+  color: var(--ts-text-muted);
+  line-height: 1;
+}
+
+.thread-count-badge__label {
+  font-size: var(--ts-font-size-xs);
+  font-weight: 500;
+  color: var(--ts-text-secondary);
+  text-transform: lowercase;
+  letter-spacing: 0.3px;
+}
+
+.thread-count-badge--filtered {
+  border-color: #fcd34d;
+  background: linear-gradient(180deg, #fffbeb 0%, #fef3c7 140%);
+  color: #b45309;
+  box-shadow: 0 1px 2px rgba(245, 158, 11, 0.12);
+}
+
+.thread-count-badge--filtered:hover {
+  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.22);
+}
+
+.thread-count-badge--filtered .thread-count-badge__label {
+  color: #b45309;
+  opacity: 0.75;
+}
+
+.thread-count-badge--filtered .thread-count-badge__total {
+  color: #b45309;
+  opacity: 0.6;
 }
 
 /* ── Sort Button ── */
