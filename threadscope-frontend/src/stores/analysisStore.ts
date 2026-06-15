@@ -36,6 +36,98 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const sortBy = ref<string>('default')
   const highlightLockAddress = ref<string | null>(null)
 
+  // ── Thread Pool Cache ──
+  // 缓存每个线程池展开后的线程列表，避免每次切换/刷新页面都重新请求。
+  // 通过 sessionStorage 按 analysisId 持久化，刷新页面（同一标签页）后仍命中缓存。
+  const threadPoolsLoaded = ref(false)
+  const poolThreads = ref<Record<string, ThreadInfo[]>>({})
+  const poolThreadsLoading = ref<Record<string, boolean>>({})
+  const expandedPools = ref<string[]>([])
+
+  function poolCacheStorageKey(id: string): string {
+    return `ts:poolCache:${id}`
+  }
+
+  function persistPoolCache() {
+    if (!analysisId.value) return
+    try {
+      sessionStorage.setItem(
+        poolCacheStorageKey(analysisId.value),
+        JSON.stringify({
+          pools: threadPools.value,
+          threads: poolThreads.value,
+          expanded: expandedPools.value,
+        }),
+      )
+    } catch {
+      // 忽略持久化失败（如隐私模式 / 配额超限），不影响内存缓存。
+    }
+  }
+
+  function hydratePoolCache(id: string): boolean {
+    try {
+      const raw = sessionStorage.getItem(poolCacheStorageKey(id))
+      if (!raw) return false
+      const data = JSON.parse(raw) as {
+        pools?: ThreadPoolInfo[]
+        threads?: Record<string, ThreadInfo[]>
+        expanded?: string[]
+      }
+      if (!Array.isArray(data.pools)) return false
+      threadPools.value = data.pools
+      poolThreads.value = data.threads ?? {}
+      expandedPools.value = data.expanded ?? []
+      threadPoolsLoaded.value = true
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  function clearPoolCache() {
+    if (analysisId.value) {
+      try {
+        sessionStorage.removeItem(poolCacheStorageKey(analysisId.value))
+      } catch {
+        // ignore
+      }
+    }
+    threadPoolsLoaded.value = false
+    poolThreads.value = {}
+    poolThreadsLoading.value = {}
+    expandedPools.value = []
+  }
+
+  /** 懒加载并缓存指定线程池内的线程列表。 */
+  async function loadPoolThreads(poolName: string) {
+    if (!analysisId.value) return
+    if (poolThreads.value[poolName]) return // 命中缓存
+    poolThreadsLoading.value[poolName] = true
+    try {
+      const res = await api.fetchThreads(analysisId.value, {
+        poolName,
+        page: 1,
+        size: 500, // 线程池内线程数通常有界
+      })
+      poolThreads.value[poolName] = res.threads
+      persistPoolCache()
+    } catch {
+      poolThreads.value[poolName] = []
+    } finally {
+      poolThreadsLoading.value[poolName] = false
+    }
+  }
+
+  function togglePoolExpanded(poolName: string) {
+    const idx = expandedPools.value.indexOf(poolName)
+    if (idx >= 0) {
+      expandedPools.value.splice(idx, 1)
+    } else {
+      expandedPools.value.push(poolName)
+    }
+    persistPoolCache()
+  }
+
   // ── Thread Detail Tabs ──
   const threadDetailTabs = ref<string[]>([])
   const activeThreadTab = ref<string | null>(null)
@@ -123,10 +215,16 @@ export const useAnalysisStore = defineStore('analysis', () => {
     deadlocks.value = res.deadlocks
   }
 
-  async function loadThreadPools() {
+  async function loadThreadPools(force = false) {
     if (!analysisId.value) return
+    // 内存缓存命中：从别的页面切回时直接复用，无需请求。
+    if (!force && threadPoolsLoaded.value) return
+    // sessionStorage 缓存命中：刷新页面后复用，无需请求。
+    if (!force && hydratePoolCache(analysisId.value)) return
     const res = await api.fetchThreadPools(analysisId.value)
     threadPools.value = res.pools
+    threadPoolsLoaded.value = true
+    persistPoolCache()
   }
 
   async function loadStackAggregations(minGroupSize = 2) {
@@ -142,6 +240,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
 
   function reset() {
+    clearPoolCache()
     analysisId.value = null
     fileName.value = ''
     overview.value = null
@@ -170,6 +269,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     activeModule, searchQuery, stateFilter, sortBy, highlightLockAddress,
     threadDetailTabs, activeThreadTab,
     openThreadDetailTab, closeThreadDetailTab, switchToThreadList,
+    // Pool cache
+    threadPoolsLoaded, poolThreads, poolThreadsLoading, expandedPools,
+    loadPoolThreads, togglePoolExpanded, clearPoolCache,
     // Computed
     isAnalyzed, healthLevel,
     // Actions

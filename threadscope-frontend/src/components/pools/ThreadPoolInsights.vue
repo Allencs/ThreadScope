@@ -6,12 +6,13 @@
  * 其内部线程实例。点击线程可跳转至 Threads 页面。
  *
  * v3: 新增按池名称搜索过滤功能。
+ * v4: 线程池列表 / 展开线程数据缓存至 store（含 sessionStorage 持久化），
+ *     切换页面或刷新页面后无需重新加载；展开的线程列表支持按名称 / 栈深度排序。
  */
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
 import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo } from '@/types'
-import * as api from '@/api/threadscope'
 
 interface PoolTooltipEntry {
   state: ThreadState
@@ -55,38 +56,86 @@ const filteredPools = computed(() => {
   )
 })
 
-// ── Pool expand state ──
-const expandedPools = ref<Set<string>>(new Set())
+// ── Pool expand state (store-backed, 跨页面 / 刷新缓存) ──
+function isExpanded(poolName: string): boolean {
+  return store.expandedPools.includes(poolName)
+}
 
-// ── Lazy-loaded thread data per pool ──
-const poolThreads = reactive<Record<string, ThreadInfo[]>>({})
-const poolLoading = reactive<Record<string, boolean>>({})
+// ── Thread sorting within an expanded pool ──
+type PoolSortKey = 'name' | 'frames'
+const sortKey = ref<PoolSortKey>('name')
+const sortDir = ref<'asc' | 'desc'>('asc')
+
+function setSort(key: PoolSortKey) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    // 名称默认升序（A→Z），栈深度默认降序（深→浅，更易发现热点）。
+    sortDir.value = key === 'name' ? 'asc' : 'desc'
+  }
+}
+
+// ── Thread state filter within an expanded pool ──
+const stateFilter = ref<ThreadState[]>([])
+
+function isStateFiltered(state: ThreadState): boolean {
+  return stateFilter.value.includes(state)
+}
+
+function toggleStateFilter(state: ThreadState) {
+  const idx = stateFilter.value.indexOf(state)
+  if (idx >= 0) {
+    stateFilter.value.splice(idx, 1)
+  } else {
+    stateFilter.value.push(state)
+  }
+}
+
+function clearStateFilter() {
+  stateFilter.value = []
+}
+
+/** 当前池内实际存在的状态（按统一顺序排列），用于渲染筛选项。 */
+function availableStates(poolName: string): ThreadState[] {
+  const list = store.poolThreads[poolName]
+  if (!list) return []
+  const present = new Set(list.map(t => t.state))
+  return STATE_ORDER.filter(s => present.has(s))
+}
+
+function sortedThreads(poolName: string): ThreadInfo[] {
+  const list = store.poolThreads[poolName]
+  if (!list) return []
+  const copy = stateFilter.value.length
+    ? list.filter(t => stateFilter.value.includes(t.state))
+    : list.slice()
+  copy.sort((a, b) => {
+    let cmp = 0
+    if (sortKey.value === 'name') {
+      // 自然排序：让 -1 / -2 / -10 / -100 按数值大小而非字典序排列。
+      cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+    } else {
+      cmp = (a.stackTrace?.length ?? 0) - (b.stackTrace?.length ?? 0)
+    }
+    return sortDir.value === 'asc' ? cmp : -cmp
+  })
+  return copy
+}
 
 onMounted(() => {
+  // 直接刷新到 pools 页时，父布局可能尚未写入 analysisId，这里兜底从路由读取。
+  const analysisIdParam = route.params.analysisId as string
+  if (analysisIdParam && !store.analysisId) {
+    store.analysisId = analysisIdParam
+  }
   store.loadThreadPools()
 })
 
-async function togglePool(poolName: string) {
-  if (expandedPools.value.has(poolName)) {
-    expandedPools.value.delete(poolName)
-  } else {
-    expandedPools.value.add(poolName)
-    // Lazy load threads for this pool if not cached
-    if (!poolThreads[poolName]) {
-      poolLoading[poolName] = true
-      try {
-        const res = await api.fetchThreads(store.analysisId!, {
-          poolName,
-          page: 1,
-          size: 500, // Pool threads are typically bounded
-        })
-        poolThreads[poolName] = res.threads
-      } catch (e) {
-        poolThreads[poolName] = []
-      } finally {
-        poolLoading[poolName] = false
-      }
-    }
+function togglePool(poolName: string) {
+  store.togglePoolExpanded(poolName)
+  if (isExpanded(poolName)) {
+    store.loadPoolThreads(poolName)
   }
 }
 
@@ -212,15 +261,22 @@ function hidePoolTooltip() {
         v-for="pool in filteredPools"
         :key="pool.poolName"
         class="pool-row"
-        :class="{ 'pool-row--expanded': expandedPools.has(pool.poolName) }"
+        :class="{ 'pool-row--expanded': isExpanded(pool.poolName) }"
       >
         <!-- Pool Header Row -->
         <div class="pool-row-header" @click="togglePool(pool.poolName)">
-          <span class="expand-icon">{{ expandedPools.has(pool.poolName) ? '▼' : '▶' }}</span>
+          <span class="expand-icon">
+            <span v-if="store.poolThreadsLoading[pool.poolName]" class="spinner spinner--inline"></span>
+            <template v-else>{{ isExpanded(pool.poolName) ? '▼' : '▶' }}</template>
+          </span>
 
           <span class="pool-name mono">{{ pool.poolName }}</span>
 
           <span class="pool-type-tag">{{ pool.poolType }}</span>
+
+          <span v-if="store.poolThreadsLoading[pool.poolName]" class="pool-loading-tag">
+            Loading…
+          </span>
 
           <!-- State distribution mini bar -->
           <div
@@ -259,17 +315,68 @@ function hidePoolTooltip() {
         </div>
 
         <!-- Expanded: Thread Instances -->
-        <div v-if="expandedPools.has(pool.poolName)" class="pool-thread-list thread-expand-enter">
+        <div v-if="isExpanded(pool.poolName)" class="pool-thread-list thread-expand-enter">
           <!-- Loading -->
-          <div v-if="poolLoading[pool.poolName]" class="pool-loading">
+          <div v-if="store.poolThreadsLoading[pool.poolName]" class="pool-loading">
             <div class="spinner"></div>
-            <span>Loading threads...</span>
+            <div class="pool-loading-text">
+              <span>Loading {{ pool.totalThreads }} threads…</span>
+              <span class="pool-loading-hint">Parsing stack traces, this may take a moment for large pools.</span>
+            </div>
           </div>
 
           <!-- Thread rows — identical to ThreadExplorer -->
-          <template v-else-if="poolThreads[pool.poolName]?.length">
+          <template v-else-if="store.poolThreads[pool.poolName]?.length">
+            <!-- Sort + Filter toolbar -->
+            <div class="thread-sort-bar">
+              <span class="thread-sort-label">Sort by</span>
+              <button
+                class="sort-btn"
+                :class="{ 'sort-btn--active': sortKey === 'name' }"
+                @click="setSort('name')"
+              >
+                Name
+                <span v-if="sortKey === 'name'" class="sort-dir">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+              </button>
+              <button
+                class="sort-btn"
+                :class="{ 'sort-btn--active': sortKey === 'frames' }"
+                @click="setSort('frames')"
+              >
+                Frames
+                <span v-if="sortKey === 'frames'" class="sort-dir">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+              </button>
+
+              <span class="thread-sort-divider"></span>
+
+              <span class="thread-sort-label">State</span>
+              <button
+                v-for="state in availableStates(pool.poolName)"
+                :key="state"
+                class="filter-chip"
+                :class="{ 'filter-chip--active': isStateFiltered(state) }"
+                :style="isStateFiltered(state) ? {
+                  color: getStateBadgeStyle(state).color,
+                  backgroundColor: getStateBadgeStyle(state).bg,
+                  borderColor: getStateBadgeStyle(state).color,
+                } : {}"
+                @click="toggleStateFilter(state)"
+              >
+                <span class="filter-chip-dot" :style="{ background: STATE_COLORS[state] }"></span>
+                {{ STATE_LABELS[state] }}
+              </button>
+              <button
+                v-if="stateFilter.length"
+                class="filter-clear"
+                @click="clearStateFilter"
+                title="Clear state filter"
+              >
+                Clear
+              </button>
+            </div>
+
             <div
-              v-for="thread in poolThreads[pool.poolName]"
+              v-for="thread in sortedThreads(pool.poolName)"
               :key="thread.name"
               class="thread-row"
             >
@@ -311,6 +418,12 @@ function hidePoolTooltip() {
                   </svg>
                 </span>
               </div>
+            </div>
+
+            <!-- Filtered to empty -->
+            <div v-if="!sortedThreads(pool.poolName).length" class="pool-empty">
+              No threads match the selected state filter.
+              <button class="filter-clear" @click="clearStateFilter">Clear filter</button>
             </div>
           </template>
 
@@ -599,8 +712,47 @@ function hidePoolTooltip() {
   animation: spin 0.8s linear infinite;
 }
 
+.spinner--inline {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-width: 1.5px;
+  vertical-align: middle;
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+.pool-loading-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+}
+
+.pool-loading-hint {
+  font-size: var(--ts-font-size-xs);
+  color: var(--ts-text-muted);
+  opacity: 0.8;
+}
+
+.pool-loading-tag {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: var(--ts-radius-full);
+  background: var(--ts-accent-light);
+  color: var(--ts-accent);
+  flex-shrink: 0;
+  letter-spacing: 0.2px;
+  animation: pool-loading-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pool-loading-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .pool-empty {
@@ -608,6 +760,109 @@ function hidePoolTooltip() {
   text-align: center;
   color: var(--ts-text-muted);
   font-size: var(--ts-font-size-sm);
+}
+
+/* ── Thread sort toolbar ── */
+.thread-sort-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-space-xs);
+  padding: 6px var(--ts-space-md) 6px calc(var(--ts-space-md) + 16px + var(--ts-space-sm));
+  background: var(--ts-bg-inset);
+  border-bottom: 1px solid var(--ts-border-color);
+}
+
+.thread-sort-label {
+  font-size: var(--ts-font-size-xs);
+  color: var(--ts-text-muted);
+  margin-right: 2px;
+}
+
+.sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 10px;
+  font-size: var(--ts-font-size-xs);
+  font-weight: 500;
+  color: var(--ts-text-secondary);
+  background: var(--ts-bg-surface);
+  border: 1px solid var(--ts-border-color);
+  border-radius: var(--ts-radius-full);
+  cursor: pointer;
+  transition: all var(--ts-transition);
+}
+
+.sort-btn:hover {
+  border-color: var(--ts-accent);
+  color: var(--ts-accent);
+}
+
+.sort-btn--active {
+  color: var(--ts-accent);
+  background: var(--ts-accent-light);
+  border-color: var(--ts-accent);
+}
+
+.sort-dir {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.thread-sort-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 4px;
+  background: var(--ts-border-color);
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  font-size: var(--ts-font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--ts-text-secondary);
+  background: var(--ts-bg-surface);
+  border: 1px solid var(--ts-border-color);
+  border-radius: var(--ts-radius-full);
+  cursor: pointer;
+  transition: all var(--ts-transition);
+}
+
+.filter-chip:hover {
+  border-color: var(--ts-text-muted);
+  color: var(--ts-text-primary);
+}
+
+.filter-chip--active {
+  font-weight: 700;
+}
+
+.filter-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--ts-radius-full);
+  flex-shrink: 0;
+}
+
+.filter-clear {
+  padding: 2px 10px;
+  font-size: var(--ts-font-size-xs);
+  font-weight: 500;
+  color: var(--ts-text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ts-radius-full);
+  cursor: pointer;
+  transition: all var(--ts-transition);
+}
+
+.filter-clear:hover {
+  color: var(--ts-accent);
+  background: var(--ts-accent-light);
 }
 
 /* ── Thread rows (consistent with ThreadExplorer) ── */
