@@ -169,12 +169,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const healthLevel = computed(() => overview.value?.healthReport?.overallLevel ?? 'HEALTHY')
 
   // ── Actions ──
-  async function uploadFile(file: File) {
+  async function uploadFile(files: File[]) {
     loading.value = true
     uploadProgress.value = 0
     error.value = null
     try {
-      const res = await api.uploadDump(file, (p) => {
+      const res = await api.uploadDump(files, (p) => {
         uploadProgress.value = p
       })
       analysisId.value = res.analysisId

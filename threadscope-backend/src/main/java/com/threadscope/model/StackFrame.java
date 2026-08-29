@@ -28,9 +28,10 @@ public record StackFrame(
     }
 
     /**
-     * 是否是 Native Method
+     * 是否是 Native Method。
+     * 用后缀匹配 — source 可能带模块前缀，如 "pinpoint.agent/Native Method"。
      */
     public boolean isNative() {
-        return "Native Method".equals(source);
+        return source != null && source.endsWith("Native Method");
     }
 }

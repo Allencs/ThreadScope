@@ -1,8 +1,12 @@
 package com.threadscope.controller;
 
+import com.threadscope.dto.TopCorrelationRequest;
+import com.threadscope.engine.analyzer.CallTreeBuilder;
+import com.threadscope.engine.analyzer.TopHCorrelator;
 import com.threadscope.model.*;
 import com.threadscope.service.AnalysisStorageService;
 
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,6 +25,8 @@ public class AnalysisController {
     private static final int MAX_BATCH_NAMES = 500;
 
     private final AnalysisStorageService storageService;
+    private final CallTreeBuilder callTreeBuilder = new CallTreeBuilder();
+    private final TopHCorrelator topHCorrelator = new TopHCorrelator();
 
     public AnalysisController(AnalysisStorageService storageService) {
         this.storageService = storageService;
@@ -50,8 +56,47 @@ public class AnalysisController {
         overview.put("deadlockCount", result.deadlocks() != null ? result.deadlocks().totalDeadlocks() : 0);
         overview.put("threadPoolCount", result.threadPools() != null ? result.threadPools().size() : 0);
         overview.put("lockContentionCount", result.lockInfos() != null ? result.lockInfos().size() : 0);
+        overview.put("dumpCount", result.dumpCount());
 
         return ResponseEntity.ok(overview);
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  多 Dump 对比
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @GetMapping("/comparison")
+    public ResponseEntity<DumpComparison> getComparison(@PathVariable String analysisId) {
+        AnalysisResult result = storageService.getOrThrow(analysisId);
+        if (result.comparison() == null) {
+            return ResponseEntity.noContent().build();
+        }
+        return ResponseEntity.ok(result.comparison());
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  调用树 (火焰图数据源)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @GetMapping("/calltree")
+    public ResponseEntity<CallTreeNode> getCallTree(
+            @PathVariable String analysisId,
+            @RequestParam(required = false) String state) {
+        AnalysisResult result = storageService.getOrThrow(analysisId);
+        ThreadState filter = (state != null && !state.isBlank()) ? ThreadState.fromString(state) : null;
+        return ResponseEntity.ok(callTreeBuilder.build(result.threads(), filter));
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  top -H CPU 关联
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @PostMapping("/cpu-correlation")
+    public ResponseEntity<TopHCorrelator.CorrelationResult> correlateCpu(
+            @PathVariable String analysisId,
+            @Valid @RequestBody TopCorrelationRequest request) {
+        AnalysisResult result = storageService.getOrThrow(analysisId);
+        return ResponseEntity.ok(topHCorrelator.correlate(request.topOutput(), result.threads()));
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

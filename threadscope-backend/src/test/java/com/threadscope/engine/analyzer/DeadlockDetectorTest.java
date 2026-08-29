@@ -16,6 +16,36 @@ class DeadlockDetectorTest {
             ThreadState.BLOCKED, null, null, List.of(), lockActions, List.of());
     }
 
+    private static ThreadInfo jucThread(String name, String parkingFor, String holding) {
+        return new ThreadInfo(name, 1, false, 5, 0, null, null, "0x1", "0x1", 1,
+            ThreadState.WAITING, null, null, List.of(),
+            List.of(new LockAction.ParkingToWaitFor(parkingFor,
+                "java.util.concurrent.locks.ReentrantLock$NonfairSync", 0)),
+            List.of(holding + " (java.util.concurrent.locks.ReentrantLock$NonfairSync)"));
+    }
+
+    @Test
+    void detectsJucLockDeadlock() {
+        // juc-A 持有 L11 等 L12；juc-B 持有 L12 等 L11 → JUC 死锁环
+        var a = jucThread("juc-A", "0xL12", "0xL11");
+        var b = jucThread("juc-B", "0xL11", "0xL12");
+
+        DeadlockInfo info = detector.detect(List.of(a, b), null);
+
+        assertEquals(1, info.totalDeadlocks());
+        var chain = info.chains().getFirst();
+        assertTrue(chain.threadNames().containsAll(List.of("juc-A", "juc-B")));
+        assertTrue(chain.description().contains("JUC"));
+    }
+
+    @Test
+    void jucParkingWithoutKnownHolderIsNotDeadlock() {
+        // 普通 Condition.await：parking 的目标锁没有 ownable synchronizer 持有者 → 不报
+        var a = jucThread("cond-waiter", "0xUNKNOWN", "0xL99");
+        DeadlockInfo info = detector.detect(List.of(a), null);
+        assertEquals(0, info.totalDeadlocks());
+    }
+
     @Test
     void detectsTwoThreadCycleByGraphAnalysis() {
         var threadA = thread("A", List.of(

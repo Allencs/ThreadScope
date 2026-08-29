@@ -10,6 +10,9 @@ import type {
   ThreadPoolInfo,
   StackAggregateGroup,
   MethodHotspot,
+  DumpComparison,
+  CallTreeNode,
+  CorrelationResult,
 } from '@/types'
 
 /** 后端统一错误体（GlobalExceptionHandler.ErrorResponse） */
@@ -48,12 +51,18 @@ function toFriendlyError(error: unknown): Error {
 api.interceptors.response.use(undefined, (error) => Promise.reject(toFriendlyError(error)))
 
 // ── Upload ──
+/**
+ * 上传一个或多个 dump 文件。
+ * 多个文件按文件名排序视为按时间先后抓取的快照，后端自动做差分对比。
+ */
 export async function uploadDump(
-  file: File,
+  files: File[],
   onProgress?: (percent: number) => void
 ): Promise<UploadResponse> {
   const formData = new FormData()
-  formData.append('file', file)
+  for (const file of files) {
+    formData.append('file', file)
+  }
   // 不手动设置 Content-Type：交给浏览器生成带 boundary 的 multipart 头
   const { data } = await api.post<UploadResponse>('/dump/upload', formData, {
     timeout: UPLOAD_TIMEOUT_MS,
@@ -153,5 +162,29 @@ export async function fetchMethodHotspots(
   const { data } = await api.get(`/analysis/${analysisId}/method-hotspots`, {
     params: { topN },
   })
+  return data
+}
+
+// ── 多 Dump 对比 ──
+export async function fetchComparison(analysisId: string): Promise<DumpComparison | null> {
+  const res = await api.get<DumpComparison>(`/analysis/${analysisId}/comparison`)
+  // 单 dump 分析返回 204 No Content
+  return res.status === 204 ? null : res.data
+}
+
+// ── 调用树 (火焰图) ──
+export async function fetchCallTree(analysisId: string, state?: string): Promise<CallTreeNode> {
+  const { data } = await api.get<CallTreeNode>(`/analysis/${analysisId}/calltree`, {
+    params: state ? { state } : {},
+  })
+  return data
+}
+
+// ── top -H CPU 关联 ──
+export async function correlateCpu(analysisId: string, topOutput: string): Promise<CorrelationResult> {
+  const { data } = await api.post<CorrelationResult>(
+    `/analysis/${analysisId}/cpu-correlation`,
+    { topOutput }
+  )
   return data
 }

@@ -32,26 +32,27 @@ async function handleFileDrop(e: DragEvent) {
   dragDepth.value = 0
   const files = e.dataTransfer?.files
   if (files && files.length > 0) {
-    await analyzeFile(files[0])
+    await analyzeFiles(Array.from(files))
   }
 }
 
 async function handleFileSelect(e: Event) {
   const input = e.target as HTMLInputElement
   if (input.files && input.files.length > 0) {
-    await analyzeFile(input.files[0])
+    await analyzeFiles(Array.from(input.files))
   }
 }
 
-async function analyzeFile(file: File) {
-  if (file.size > MAX_UPLOAD_BYTES) {
-    errorMsg.value = `File is ${(file.size / 1024 / 1024).toFixed(1)}MB — exceeds the 50MB limit`
+async function analyzeFiles(files: File[]) {
+  const totalSize = files.reduce((sum, f) => sum + f.size, 0)
+  if (totalSize > MAX_UPLOAD_BYTES) {
+    errorMsg.value = `Total size is ${(totalSize / 1024 / 1024).toFixed(1)}MB — exceeds the 50MB limit`
     return
   }
   isUploading.value = true
   errorMsg.value = ''
   try {
-    await store.uploadFile(file)
+    await store.uploadFile(files)
     router.push(`/analysis/${store.analysisId}/dashboard`)
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : 'Failed to analyze file'
@@ -117,6 +118,7 @@ async function handlePaste() {
         <input
           ref="fileInput"
           type="file"
+          multiple
           accept=".txt,.log,.tdump,.dump,.out"
           style="display: none"
           @change="handleFileSelect"
@@ -134,8 +136,11 @@ async function handlePaste() {
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
           </div>
-          <p class="drop-title">Drop Thread Dump File Here</p>
+          <p class="drop-title">Drop Thread Dump File(s) Here</p>
           <p class="drop-hint">or click to browse &middot; .txt .log .tdump .dump</p>
+          <p class="drop-hint">
+            Drop multiple dumps taken seconds apart to unlock trend &amp; stuck-thread comparison
+          </p>
         </div>
       </div>
 

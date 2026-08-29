@@ -122,6 +122,68 @@ export interface OverviewData {
   deadlockCount: number
   threadPoolCount: number
   lockContentionCount: number
+  dumpCount: number
+}
+
+// ── 多 Dump 对比 ──
+export interface SnapshotSummary {
+  index: number
+  timestamp: string | null
+  totalThreads: number
+  stateDistribution: Record<ThreadState, number>
+}
+
+export interface StuckThread {
+  threadName: string
+  state: ThreadState
+  dumpsSeen: number
+  topMethod: string
+  topFrames: string[]
+}
+
+export interface CpuDelta {
+  threadName: string
+  cpuMsDelta: number
+  firstCpuMs: number
+  lastCpuMs: number
+  lastState: ThreadState
+  topMethod: string
+}
+
+export interface ThreadTrend {
+  groupName: string
+  counts: number[]
+}
+
+export interface DumpComparison {
+  dumpCount: number
+  snapshots: SnapshotSummary[]
+  stuckThreads: StuckThread[]
+  topCpuThreads: CpuDelta[]
+  threadTrends: ThreadTrend[]
+}
+
+// ── 调用树 (火焰图) ──
+export interface CallTreeNode {
+  name: string
+  value: number
+  children: CallTreeNode[]
+}
+
+// ── top -H CPU 关联 ──
+export interface CorrelatedThread {
+  threadName: string
+  nid: string
+  nidDecimal: number
+  cpuPercent: number
+  state: ThreadState
+  topMethod: string
+}
+
+export interface CorrelationResult {
+  threads: CorrelatedThread[]
+  parsedEntries: number
+  matched: number
 }
 
 export interface UploadResponse {

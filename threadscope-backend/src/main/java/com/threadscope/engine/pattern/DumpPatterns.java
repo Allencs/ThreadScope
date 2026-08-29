@@ -122,9 +122,12 @@ public final class DumpPatterns {
         "^\\s+Locked ownable synchronizers:"
     );
 
-    /** "- <0x000000076ab220f8> (a java.util.concurrent.locks.ReentrantLock$NonfairSync)" */
+    /**
+     * "- <0x000000076ab220f8> (a java.util.concurrent.locks.ReentrantLock$NonfairSync)"
+     * 行首空白用 \s* — 词法器存储时已 trim()，语义解析阶段的输入没有前导空白。
+     */
     public static final Pattern OWNABLE_SYNC_ENTRY = Pattern.compile(
-        "^\\s+-\\s+<(0x[0-9a-fA-F]+)>\\s+\\(a\\s+(.+?)\\)"
+        "^\\s*-\\s+<(0x[0-9a-fA-F]+)>\\s+\\(a\\s+(.+?)\\)"
     );
 
     /** "- None" */

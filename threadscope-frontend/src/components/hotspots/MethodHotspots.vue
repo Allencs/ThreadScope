@@ -26,7 +26,7 @@ const maxOccurrences = computed(() =>
       <div v-for="(hs, idx) in store.methodHotspots" :key="idx" class="hotspot-row">
         <div class="hotspot-rank mono">{{ idx + 1 }}</div>
         <div class="hotspot-info">
-          <div class="hotspot-method mono">
+          <div class="hotspot-method mono" :title="hs.className + '.' + hs.methodName">
             <span class="method-class">{{ hs.className.split('.').pop() }}</span>.<span class="method-name">{{ hs.methodName }}</span>
           </div>
           <div class="hotspot-fullclass mono">{{ hs.className }}</div>
@@ -69,7 +69,9 @@ const maxOccurrences = computed(() =>
 .hotspot-row:hover { background: var(--ts-bg-hover); border-color: var(--ts-border-color); }
 
 .hotspot-rank { font-size: var(--ts-font-size-sm); color: var(--ts-text-muted); text-align: center; }
-.hotspot-method { font-size: var(--ts-font-size-sm); }
+/* min-width: 0 允许 grid 子项收缩，配合 ellipsis 防止长方法名溢出到进度条列 */
+.hotspot-info { min-width: 0; }
+.hotspot-method { font-size: var(--ts-font-size-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .method-class { color: var(--ts-text-secondary); }
 .method-name { color: var(--ts-accent); font-weight: 600; }
 .hotspot-fullclass { font-size: 10px; color: var(--ts-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

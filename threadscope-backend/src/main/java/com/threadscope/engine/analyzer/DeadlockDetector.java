@@ -34,6 +34,9 @@ public class DeadlockDetector {
         // 策略2: 自主图分析检测 (补充JVM未报告的潜在死锁)
         chains.addAll(detectByGraphAnalysis(threads));
 
+        // 策略3: JUC 锁 (ReentrantLock/Semaphore 等) 死锁检测
+        chains.addAll(detectJucDeadlocks(threads));
+
         // 去重
         chains = deduplicateChains(chains);
 
@@ -66,12 +69,64 @@ public class DeadlockDetector {
             }
         }
 
-        // 三色 DFS 检测环：
-        //   白 = 未访问；灰 = 在当前路径上 (indexInPath)；黑 = 已探索完毕 (done)。
-        // 每个线程至多等待一把锁 (函数式图)，因此从每个白色节点沿唯一出边前进即可：
-        //   - 撞到灰色节点 → 找到环
-        //   - 撞到黑色节点 → 该方向已探索过，不会有新环
-        // 只有确认无环后才把路径标黑，避免"过早标记 visited"导致的漏检。
+        return findCycles(threadWaiting, lockHolders, "Deadlock detected: ");
+    }
+
+    /**
+     * 策略3: JUC 锁死锁检测。
+     *
+     * synchronized 之外，ReentrantLock/ReadWriteLock/Semaphore 也会形成死锁。
+     * 构图方式：
+     *   持有边 — "Locked ownable synchronizers" 段列出的锁地址
+     *   等待边 — "parking to wait for <0x...>" 中的锁地址
+     * 保守策略：只有当 parking 等待的锁地址能对应到明确的 ownable synchronizer 持有者、
+     * 且形成完整环时才报告，避免把普通的 Condition.await 误判为死锁。
+     */
+    private List<DeadlockInfo.DeadlockChain> detectJucDeadlocks(List<ThreadInfo> threads) {
+        // 持有边: ownable synchronizer 地址 → holder
+        Map<String, String> jucHolders = new HashMap<>();
+        for (ThreadInfo thread : threads) {
+            for (String sync : thread.ownableSynchronizers()) {
+                // 格式: "0x000000076ab220f8 (a java.util.concurrent.locks.ReentrantLock$NonfairSync)"
+                int spaceIdx = sync.indexOf(' ');
+                String addr = spaceIdx > 0 ? sync.substring(0, spaceIdx) : sync;
+                if (addr.startsWith("<") && addr.endsWith(">")) {
+                    addr = addr.substring(1, addr.length() - 1);
+                }
+                jucHolders.putIfAbsent(addr, thread.name());
+            }
+        }
+        if (jucHolders.isEmpty()) return List.of();
+
+        // 等待边: parking to wait for 的目标锁 (仅当该锁有已知持有者且不是自己)
+        Map<String, String> threadWaiting = new HashMap<>();
+        for (ThreadInfo thread : threads) {
+            for (LockAction action : thread.lockActions()) {
+                if (action instanceof LockAction.ParkingToWaitFor parking) {
+                    String holder = jucHolders.get(parking.lockAddress());
+                    if (holder != null && !holder.equals(thread.name())) {
+                        threadWaiting.put(thread.name(), parking.lockAddress());
+                    }
+                }
+            }
+        }
+
+        return findCycles(threadWaiting, jucHolders, "Suspected JUC lock deadlock: ");
+    }
+
+    /**
+     * 三色 DFS 环检测 (synchronized 与 JUC 两套图共用)。
+     *
+     *   白 = 未访问；灰 = 在当前路径上 (indexInPath)；黑 = 已探索完毕 (done)。
+     * 每个线程至多等待一把锁 (函数式图)，因此从每个白色节点沿唯一出边前进即可：
+     *   - 撞到灰色节点 → 找到环
+     *   - 撞到黑色节点 → 该方向已探索过，不会有新环
+     * 只有确认无环后才把路径标黑，避免"过早标记 visited"导致的漏检。
+     */
+    private List<DeadlockInfo.DeadlockChain> findCycles(
+            Map<String, String> threadWaiting,
+            Map<String, String> lockHolders,
+            String descPrefix) {
         List<DeadlockInfo.DeadlockChain> chains = new ArrayList<>();
         Set<String> done = new HashSet<>();
 
@@ -109,7 +164,7 @@ public class DeadlockDetector {
                         .filter(Objects::nonNull)
                         .toList();
 
-                    String desc = "Deadlock detected: " + String.join(" → ", cycle) + " → " + cycleEntry;
+                    String desc = descPrefix + String.join(" → ", cycle) + " → " + cycleEntry;
                     chains.add(new DeadlockInfo.DeadlockChain(cycle, cycleLocks, desc));
                 }
             }

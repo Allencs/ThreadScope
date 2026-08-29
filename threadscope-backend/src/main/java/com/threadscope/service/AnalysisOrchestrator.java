@@ -30,6 +30,8 @@ public class AnalysisOrchestrator {
 
     private final ThreadDumpLexer lexer;
     private final ThreadSemanticParser semanticParser = new ThreadSemanticParser();
+    private final MultiDumpSplitter dumpSplitter = new MultiDumpSplitter();
+    private final DumpComparator dumpComparator = new DumpComparator();
     private final DeadlockDetector deadlockDetector = new DeadlockDetector();
     private final LockGraphBuilder lockGraphBuilder = new LockGraphBuilder();
     private final ThreadPoolDetector threadPoolDetector = new ThreadPoolDetector();
@@ -46,33 +48,59 @@ public class AnalysisOrchestrator {
 
     /**
      * 完整分析流程: 从 InputStream 到 AnalysisResult。
+     * 内容整体读入后走多 dump 切分逻辑 (上传大小已由 multipart 上限约束)。
      */
     public AnalysisResult analyze(String analysisId, String fileName, InputStream inputStream) throws IOException {
-        long startTime = System.currentTimeMillis();
-
-        // ━━━ Step 1: 词法分析 (流式，单线程) ━━━
-        log.info("[{}] Starting lexical analysis for: {}", analysisId, fileName);
-        ThreadDumpLexer.LexerResult lexerResult = lexer.tokenize(inputStream);
-        log.info("[{}] Lexer found {} thread blocks", analysisId, lexerResult.threadBlocks().size());
-
-        // ━━━ Step 2: 语义解析 (Virtual Threads 并行) ━━━
-        List<ThreadInfo> threads = parseThreadsConcurrently(lexerResult.threadBlocks());
-        log.info("[{}] Parsed {} threads", analysisId, threads.size());
-
-        // ━━━ Step 3: 多引擎并行分析 (Structured Concurrency 风格) ━━━
-        return analyzeWithEngines(analysisId, fileName, lexerResult, threads, startTime);
+        String content = new String(inputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        return analyzeFromText(analysisId, fileName, content);
     }
 
     /**
-     * 从文本内容分析 (粘贴场景)。
+     * 从文本内容分析 (粘贴/单文件场景)。
+     * 文件内包含多个 "Full thread dump" 段时自动切分并做差分对比。
      */
     public AnalysisResult analyzeFromText(String analysisId, String fileName, String content) throws IOException {
+        return analyzeContents(analysisId, fileName, List.of(content));
+    }
+
+    /**
+     * 多文件分析 — 每个文件视为一份 (或多份) dump，按顺序对比。
+     */
+    public AnalysisResult analyzeContents(String analysisId, String fileName, List<String> contents) throws IOException {
         long startTime = System.currentTimeMillis();
 
-        ThreadDumpLexer.LexerResult lexerResult = lexer.tokenize(content);
-        List<ThreadInfo> threads = parseThreadsConcurrently(lexerResult.threadBlocks());
+        // ━━━ Step 1: 切分 dump 段 (跨文件展平) ━━━
+        List<MultiDumpSplitter.DumpSegment> segments = new ArrayList<>();
+        for (String content : contents) {
+            segments.addAll(dumpSplitter.split(content));
+        }
+        log.info("[{}] Found {} dump segment(s) in: {}", analysisId, segments.size(), fileName);
 
-        return analyzeWithEngines(analysisId, fileName, lexerResult, threads, startTime);
+        // ━━━ Step 2: 逐段词法 + 语义解析 ━━━
+        List<ThreadDumpLexer.LexerResult> lexerResults = new ArrayList<>();
+        List<List<ThreadInfo>> dumps = new ArrayList<>();
+        for (MultiDumpSplitter.DumpSegment segment : segments) {
+            ThreadDumpLexer.LexerResult lexerResult = lexer.tokenize(segment.content());
+            lexerResults.add(lexerResult);
+            dumps.add(parseThreadsConcurrently(lexerResult.threadBlocks()));
+        }
+
+        // ━━━ Step 3: 多 dump 差分对比 ━━━
+        DumpComparison comparison = null;
+        if (dumps.size() > 1) {
+            comparison = dumpComparator.compare(
+                dumps,
+                segments.stream().map(MultiDumpSplitter.DumpSegment::timestamp).toList());
+            log.info("[{}] Compared {} dumps: {} stuck threads", analysisId,
+                dumps.size(), comparison.stuckThreads().size());
+        }
+
+        // ━━━ Step 4: 对最新一份 dump 做完整引擎分析 ━━━
+        ThreadDumpLexer.LexerResult lastLexer = lexerResults.getLast();
+        List<ThreadInfo> lastThreads = dumps.getLast();
+        log.info("[{}] Parsed {} threads (latest dump)", analysisId, lastThreads.size());
+
+        return analyzeWithEngines(analysisId, fileName, lastLexer, lastThreads, comparison, startTime);
     }
 
     /**
@@ -107,6 +135,7 @@ public class AnalysisOrchestrator {
             String fileName,
             ThreadDumpLexer.LexerResult lexerResult,
             List<ThreadInfo> threads,
+            DumpComparison comparison,
             long startTime) {
 
         // 状态分布统计
@@ -169,7 +198,8 @@ public class AnalysisOrchestrator {
                 threadPools,
                 hotspots,
                 stackAggs,
-                healthReport
+                healthReport,
+                comparison
             );
 
         } catch (Exception e) {

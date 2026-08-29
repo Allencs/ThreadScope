@@ -45,6 +45,16 @@ const routes = [
         name: 'hotspots',
         component: () => import('@/components/hotspots/MethodHotspots.vue'),
       },
+      {
+        path: 'flame',
+        name: 'flame',
+        component: () => import('@/components/flame/FlameGraphView.vue'),
+      },
+      {
+        path: 'compare',
+        name: 'compare',
+        component: () => import('@/components/comparison/ComparisonView.vue'),
+      },
     ],
   },
 ]

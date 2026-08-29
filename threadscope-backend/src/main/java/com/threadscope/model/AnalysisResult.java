@@ -28,9 +28,16 @@ public record AnalysisResult(
     List<StackAggregateGroup> stackAggregations,
 
     // ── 健康评估 ──
-    HealthReport healthReport
+    HealthReport healthReport,
+
+    // ── 多 dump 对比 (单 dump 时为 null) ──
+    DumpComparison comparison
 ) {
     public int totalThreads() {
         return threads != null ? threads.size() : 0;
+    }
+
+    public int dumpCount() {
+        return comparison != null ? comparison.dumpCount() : 1;
     }
 }

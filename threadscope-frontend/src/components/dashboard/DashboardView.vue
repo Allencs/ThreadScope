@@ -16,7 +16,7 @@
 import { onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
-import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo, type ThreadPoolInfo, type MethodHotspot, type LockInfo } from '@/types'
+import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo, type ThreadPoolInfo, type MethodHotspot, type LockInfo, type CorrelationResult } from '@/types'
 import * as api from '@/api/threadscope'
 
 const store = useAnalysisStore()
@@ -28,8 +28,28 @@ const topThreads = ref<ThreadInfo[]>([])
 const topPools = ref<ThreadPoolInfo[]>([])
 const topMethods = ref<MethodHotspot[]>([])
 const topLocks = ref<LockInfo[]>([])
-const activeTab = ref<'threads' | 'pools' | 'methods' | 'locks'>('threads')
+const activeTab = ref<'threads' | 'pools' | 'methods' | 'locks' | 'cpu'>('threads')
 const topLoading = ref(false)
+
+// ── top -H CPU 关联 ──
+const topHInput = ref('')
+const cpuResult = ref<CorrelationResult | null>(null)
+const cpuLoading = ref(false)
+const cpuError = ref('')
+
+async function runCpuCorrelation() {
+  const analysisId = route.params.analysisId as string
+  if (!topHInput.value.trim() || !analysisId) return
+  cpuLoading.value = true
+  cpuError.value = ''
+  try {
+    cpuResult.value = await api.correlateCpu(analysisId, topHInput.value)
+  } catch (e) {
+    cpuError.value = e instanceof Error ? e.message : 'Correlation failed'
+  } finally {
+    cpuLoading.value = false
+  }
+}
 
 onMounted(async () => {
   if (!store.overview) {
@@ -267,6 +287,7 @@ const tabs = [
   { key: 'pools', label: 'Thread Pools' },
   { key: 'methods', label: 'Methods' },
   { key: 'locks', label: 'Locks' },
+  { key: 'cpu', label: 'CPU (top -H)' },
 ]
 </script>
 
@@ -550,6 +571,64 @@ const tabs = [
           </span>
         </div>
         <div v-if="topLocks.length === 0" class="table-empty">No lock data</div>
+      </div>
+
+      <!-- ── CPU (top -H) 关联 ── -->
+      <div v-if="activeTab === 'cpu'" class="cpu-panel">
+        <p class="cpu-hint">
+          Paste the output of <code class="mono">top -H -p &lt;pid&gt;</code> captured at the same time as the dump.
+          OS thread PIDs are matched against Java thread nids to reveal which code the hottest threads are running.
+        </p>
+        <textarea
+          v-model="topHInput"
+          class="cpu-textarea mono"
+          rows="8"
+          placeholder="    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+   419 app       20   0 8912345 456789  12345 R  93.8   5.6   1:23.45 java
+   ..."
+        ></textarea>
+        <div class="cpu-actions">
+          <button class="cpu-btn" :disabled="cpuLoading || !topHInput.trim()" @click="runCpuCorrelation">
+            {{ cpuLoading ? 'Correlating...' : 'Correlate' }}
+          </button>
+          <span v-if="cpuError" class="cpu-error">{{ cpuError }}</span>
+          <span v-else-if="cpuResult" class="cpu-summary text-muted">
+            {{ cpuResult.matched }} / {{ cpuResult.parsedEntries }} OS threads matched
+          </span>
+        </div>
+
+        <div v-if="cpuResult && cpuResult.threads.length" class="top-table">
+          <div class="table-header">
+            <span class="col col--name">Java Thread</span>
+            <span class="col col--num">%CPU</span>
+            <span class="col col--state">State</span>
+            <span class="col col--class">Top Method</span>
+          </div>
+          <div
+            v-for="(t, i) in cpuResult.threads.slice(0, 15)"
+            :key="t.nid"
+            class="table-row table-row--clickable"
+            @click="navigateToThread(t.threadName)"
+          >
+            <span class="col col--name">
+              <span class="row-rank mono">{{ i + 1 }}</span>
+              <span class="mono">{{ t.threadName }}</span>
+            </span>
+            <span class="col col--num mono" :class="{ 'text-danger': t.cpuPercent >= 50 }">
+              {{ t.cpuPercent.toFixed(1) }}
+            </span>
+            <span class="col col--state">
+              <span
+                class="mono text-sm"
+                :style="{ color: STATE_COLORS[t.state] }"
+              >{{ t.state }}</span>
+            </span>
+            <span class="col col--class mono text-sm text-muted">{{ t.topMethod }}</span>
+          </div>
+        </div>
+        <div v-else-if="cpuResult && !cpuResult.threads.length" class="table-empty">
+          No OS threads matched — check that the top output belongs to the same JVM process.
+        </div>
       </div>
     </div>
 
@@ -1039,6 +1118,61 @@ function detectPool(threadName: string): string {
   color: var(--ts-text-muted);
   font-size: var(--ts-font-size-sm);
 }
+
+/* ── CPU (top -H) 关联面板 ── */
+.cpu-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-space-sm);
+  padding: var(--ts-space-md) 0;
+}
+
+.cpu-hint {
+  font-size: var(--ts-font-size-xs);
+  color: var(--ts-text-muted);
+}
+.cpu-hint code {
+  background: var(--ts-bg-primary);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.cpu-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--ts-space-sm);
+  border: var(--ts-border);
+  border-radius: var(--ts-radius-md);
+  font-size: var(--ts-font-size-xs);
+  resize: vertical;
+  background: var(--ts-bg-primary);
+  color: var(--ts-text-primary);
+}
+.cpu-textarea:focus { outline: 2px solid var(--ts-accent); outline-offset: -1px; }
+
+.cpu-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-space-md);
+}
+
+.cpu-btn {
+  padding: 6px 18px;
+  font-size: var(--ts-font-size-sm);
+  border: none;
+  border-radius: var(--ts-radius-md);
+  background: var(--ts-accent);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity var(--ts-transition);
+}
+.cpu-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.cpu-error {
+  font-size: var(--ts-font-size-xs);
+  color: var(--ts-danger);
+}
+.cpu-summary { font-size: var(--ts-font-size-xs); }
 
 /* ── Column sizes ── */
 .col { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

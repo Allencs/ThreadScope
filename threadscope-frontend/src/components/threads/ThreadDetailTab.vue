@@ -211,8 +211,9 @@ function getLockTypeLabel(className: string): { tag: string; detail: string } {
               :class="{ 'stack-frame--jdk': frame.className.startsWith('java.') || frame.className.startsWith('sun.') || frame.className.startsWith('jdk.') }"
             >
               <span class="frame-idx">{{ idx }}</span>
-              <span class="frame-at">at </span>
-              <span class="frame-class">{{ frame.className }}</span>.<span class="frame-method">{{ frame.methodName }}</span>(<span class="frame-source">{{ frame.source }}</span>)
+              <span class="frame-at">at</span>
+              <!-- 签名整体包成单个 flex item — 父容器是 flex+gap，裸文本 . ( ) 若直接暴露会被当成独立 item 插入间隙 -->
+              <span class="frame-sig"><span class="frame-class">{{ frame.className }}</span>.<span class="frame-method">{{ frame.methodName }}</span>(<span class="frame-source">{{ frame.source }}</span>)</span>
             </div>
 
             <div
@@ -224,8 +225,8 @@ function getLockTypeLabel(className: string): { tag: string; detail: string } {
               :title="'Click to view lock ' + lock.lockAddress + ' in Locks page'"
             >
               <span class="lock-type">{{ getLockActionLabel(lock) }}</span>
-              &lt;<span class="lock-addr">{{ lock.lockAddress }}</span>&gt;
-              (a {{ lock.lockClassName }})
+              <!-- 地址与类名包成单个 flex item，避免父容器 gap 在 < > ( ) 文本节点间插缝 -->
+              <span class="lock-target">&lt;<span class="lock-addr">{{ lock.lockAddress }}</span>&gt; (a {{ lock.lockClassName }})</span>
               <template v-if="getLockContentionInfo(lock)?.waitingThreadNames?.length">
                 <span class="lock-contention-badge">
                   <svg width="12" height="12" viewBox="0 0 16 16" fill="none">

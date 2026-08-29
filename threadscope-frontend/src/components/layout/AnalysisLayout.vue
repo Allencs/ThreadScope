@@ -2,7 +2,7 @@
 /**
  * AnalysisLayout — Main analysis frame with topbar, sidebar, content, and statusbar.
  */
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
 
@@ -11,14 +11,22 @@ const router = useRouter()
 const store = useAnalysisStore()
 const sidebarCollapsed = ref(false)
 
-const navItems = [
-  { name: 'dashboard', label: 'Overview' },
-  { name: 'threads', label: 'Threads' },
-  { name: 'locks', label: 'Locks' },
-  { name: 'pools', label: 'Thread Pools' },
-  { name: 'aggregation', label: 'Aggregation' },
-  { name: 'hotspots', label: 'Hotspots' },
-]
+const navItems = computed(() => {
+  const items = [
+    { name: 'dashboard', label: 'Overview' },
+    { name: 'threads', label: 'Threads' },
+    { name: 'locks', label: 'Locks' },
+    { name: 'pools', label: 'Thread Pools' },
+    { name: 'aggregation', label: 'Aggregation' },
+    { name: 'hotspots', label: 'Hotspots' },
+    { name: 'flame', label: 'Flame Graph' },
+  ]
+  // 仅多 dump 分析才有对比数据
+  if ((store.overview?.dumpCount ?? 1) > 1) {
+    items.push({ name: 'compare', label: 'Comparison' })
+  }
+  return items
+})
 
 // 监听路由中的 analysisId：
 // 1. 刷新页面时加载 overview

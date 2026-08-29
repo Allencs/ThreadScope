@@ -36,7 +36,7 @@ class AnalysisControllerTest {
             .toList();
         return new AnalysisResult("test-id", "test.txt", "21", Instant.now(), 10,
             threads, Map.of(ThreadState.RUNNABLE, (long) count),
-            new DeadlockInfo(List.of()), List.of(), List.of(), List.of(), List.of(), null);
+            new DeadlockInfo(List.of()), List.of(), List.of(), List.of(), List.of(), null, null);
     }
 
     @Test
