@@ -17,6 +17,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const analysisId = ref<string | null>(null)
   const fileName = ref('')
   const loading = ref(false)
+  const uploadProgress = ref(0)
   const error = ref<string | null>(null)
 
   // ── Module Data (Lazy Loaded) ──
@@ -98,18 +99,28 @@ export const useAnalysisStore = defineStore('analysis', () => {
     expandedPools.value = []
   }
 
-  /** 懒加载并缓存指定线程池内的线程列表。 */
+  /** 懒加载并缓存指定线程池内的线程列表（分页拉全量，避免大池被截断）。 */
   async function loadPoolThreads(poolName: string) {
     if (!analysisId.value) return
     if (poolThreads.value[poolName]) return // 命中缓存
     poolThreadsLoading.value[poolName] = true
     try {
-      const res = await api.fetchThreads(analysisId.value, {
-        poolName,
-        page: 1,
-        size: 500, // 线程池内线程数通常有界
-      })
-      poolThreads.value[poolName] = res.threads
+      const PAGE_SIZE = 1000
+      const all: ThreadInfo[] = []
+      let page = 1
+      let total = Number.POSITIVE_INFINITY
+      while (all.length < total) {
+        const res = await api.fetchThreads(analysisId.value, {
+          poolName,
+          page,
+          size: PAGE_SIZE,
+        })
+        all.push(...res.threads)
+        total = res.total
+        if (res.threads.length === 0) break // 防御：后端返回空页时避免死循环
+        page++
+      }
+      poolThreads.value[poolName] = all
       persistPoolCache()
     } catch {
       poolThreads.value[poolName] = []
@@ -160,9 +171,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
   // ── Actions ──
   async function uploadFile(file: File) {
     loading.value = true
+    uploadProgress.value = 0
     error.value = null
     try {
-      const res = await api.uploadDump(file)
+      const res = await api.uploadDump(file, (p) => {
+        uploadProgress.value = p
+      })
       analysisId.value = res.analysisId
       fileName.value = res.fileName
       await loadOverview()
@@ -171,6 +185,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
       throw e
     } finally {
       loading.value = false
+      uploadProgress.value = 0
     }
   }
 
@@ -193,6 +208,10 @@ export const useAnalysisStore = defineStore('analysis', () => {
   async function loadOverview() {
     if (!analysisId.value) return
     overview.value = await api.fetchOverview(analysisId.value)
+    // 刷新页面后 store 是空的：从 overview 回填 fileName，状态栏才不会显示 "No file"
+    if (overview.value?.fileName) {
+      fileName.value = overview.value.fileName
+    }
   }
 
   async function loadThreads(page = 1, size = 50) {
@@ -243,6 +262,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     clearPoolCache()
     analysisId.value = null
     fileName.value = ''
+    loading.value = false
+    uploadProgress.value = 0
     overview.value = null
     threads.value = []
     threadTotal.value = 0
@@ -263,7 +284,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   return {
     // State
-    analysisId, fileName, loading, error,
+    analysisId, fileName, loading, uploadProgress, error,
     overview, threads, threadTotal,
     locks, deadlocks, threadPools, stackAggregations, methodHotspots,
     activeModule, searchQuery, stateFilter, sortBy, highlightLockAddress,

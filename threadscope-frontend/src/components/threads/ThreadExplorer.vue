@@ -5,7 +5,7 @@
  *
  * v3: Tab 容器 — 固定 "All Threads" 列表 + 从外部跳转打开的线程详情 Tab。
  */
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
 import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo, type LockAction, type LockInfo } from '@/types'
@@ -50,6 +50,9 @@ watch(searchInput, (val) => {
     store.loadThreads(1, pageSize)
   }, 300)
 })
+
+// 组件卸载后不能再触发搜索回调写 store
+onUnmounted(() => clearTimeout(searchTimer))
 
 const stateFilterOptions: ThreadState[] = ['RUNNABLE', 'BLOCKED', 'WAITING', 'TIMED_WAITING']
 

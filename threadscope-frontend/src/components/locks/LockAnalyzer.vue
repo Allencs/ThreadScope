@@ -10,7 +10,7 @@
  * 2. 分块渲染：大列表通过 renderLimit 逐步渲染，避免一次性挂载数百 DOM 节点
  * 3. content-visibility: auto：不可见区域的 thread-row 跳过布局与绘制
  */
-import { onMounted, ref, watch, nextTick, computed, reactive } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch, nextTick, computed, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
 import { STATE_COLORS, STATE_LABELS } from '@/types'
@@ -47,16 +47,28 @@ function getVisibleThreadNames(lockAddr: string, allNames: string[]): string[] {
   return allNames.slice(0, limit)
 }
 
+// 记录进行中的 rAF 与高亮定时器，组件卸载时统一取消，避免写已卸载组件的状态
+const pendingRafIds = new Set<number>()
+let highlightTimer: ReturnType<typeof setTimeout> | undefined
+
 function scheduleRenderMore(lockAddr: string, total: number) {
   const current = renderLimits[lockAddr] ?? RENDER_CHUNK
   if (current >= total) return
-  requestAnimationFrame(() => {
+  const rafId = requestAnimationFrame(() => {
+    pendingRafIds.delete(rafId)
     renderLimits[lockAddr] = Math.min(current + RENDER_CHUNK, total)
     if (renderLimits[lockAddr] < total) {
       scheduleRenderMore(lockAddr, total)
     }
   })
+  pendingRafIds.add(rafId)
 }
+
+onBeforeUnmount(() => {
+  pendingRafIds.forEach((id) => cancelAnimationFrame(id))
+  pendingRafIds.clear()
+  clearTimeout(highlightTimer)
+})
 
 onMounted(async () => {
   await store.loadLocks()
@@ -121,7 +133,8 @@ function expandAndScrollTo(addr: string) {
     const el = lockRefs.value[addr]
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      setTimeout(() => { store.highlightLockAddress = null }, 3000)
+      clearTimeout(highlightTimer)
+      highlightTimer = setTimeout(() => { store.highlightLockAddress = null }, 3000)
     }
   })
 }

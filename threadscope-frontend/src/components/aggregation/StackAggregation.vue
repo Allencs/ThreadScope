@@ -21,6 +21,17 @@ function toggleGroup(fingerprint: string) {
     expandedGroups.value.add(fingerprint)
   }
 }
+
+/**
+ * 组标题：优先用后端生成的 groupLabel（跳过 Unsafe.park 等 idle 帧的可读摘要），
+ * 兜底用有意义栈顶帧，最后才退回原始栈顶（否则大量组都显示 Unsafe.park）。
+ */
+function groupTitle(group: (typeof store.stackAggregations)[number]): string {
+  if (group.groupLabel && group.groupLabel !== '—') return group.groupLabel
+  const frame = group.meaningfulTopFrame ?? group.representativeStack?.[0]
+  if (!frame) return '<no stack>'
+  return `${frame.className.split('.').pop()}.${frame.methodName}`
+}
 </script>
 
 <template>
@@ -35,9 +46,7 @@ function toggleGroup(fingerprint: string) {
           <span class="agg-count mono" :style="{ color: group.threadCount >= 10 ? 'var(--ts-danger)' : 'var(--ts-accent)' }">
             ×{{ group.threadCount }}
           </span>
-          <span class="agg-top-method mono">
-            {{ group.representativeStack?.[0]?.className?.split('.')?.pop() }}.{{ group.representativeStack?.[0]?.methodName }}
-          </span>
+          <span class="agg-top-method mono">{{ groupTitle(group) }}</span>
           <div class="agg-states">
             <span v-for="(count, state) in group.stateDistribution" :key="state"
               class="mini-badge"

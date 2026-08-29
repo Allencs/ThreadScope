@@ -5,6 +5,7 @@ import com.threadscope.model.AnalysisResult;
 import com.threadscope.service.AnalysisOrchestrator;
 import com.threadscope.service.AnalysisStorageService;
 
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -12,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.util.UUID;
 
 /**
@@ -37,28 +39,19 @@ public class DumpUploadController {
      * POST /api/v1/dump/upload
      */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<UploadResponse> uploadDump(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<UploadResponse> uploadDump(@RequestParam("file") MultipartFile file) throws IOException {
+        if (file.isEmpty()) {
+            throw new IllegalArgumentException("Uploaded file is empty");
+        }
         log.info("Received dump file: {} ({}KB)", file.getOriginalFilename(), file.getSize() / 1024);
 
-        try {
-            String analysisId = UUID.randomUUID().toString();
-            String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "unknown.txt";
+        String analysisId = UUID.randomUUID().toString();
+        String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "unknown.txt";
 
-            AnalysisResult result = orchestrator.analyze(analysisId, fileName, file.getInputStream());
-            storageService.store(analysisId, result);
+        AnalysisResult result = orchestrator.analyze(analysisId, fileName, file.getInputStream());
+        storageService.store(analysisId, result);
 
-            return ResponseEntity.ok(new UploadResponse(
-                result.analysisId(),
-                result.fileName(),
-                result.totalThreads(),
-                result.parseTimeMs(),
-                result.jvmVersion(),
-                result.analyzedAt()
-            ));
-        } catch (Exception e) {
-            log.error("Failed to analyze dump file", e);
-            return ResponseEntity.internalServerError().build();
-        }
+        return ResponseEntity.ok(toResponse(result));
     }
 
     /**
@@ -66,31 +59,26 @@ public class DumpUploadController {
      * POST /api/v1/dump/paste
      */
     @PostMapping(value = "/paste", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<UploadResponse> pasteDump(@RequestBody PasteRequest request) {
-        if (request.content() == null || request.content().isBlank()) {
-            return ResponseEntity.badRequest().build();
-        }
-
+    public ResponseEntity<UploadResponse> pasteDump(@Valid @RequestBody PasteRequest request) throws IOException {
         log.info("Received pasted dump content ({} chars)", request.content().length());
 
-        try {
-            String analysisId = UUID.randomUUID().toString();
-            String fileName = "pasted-dump.txt";
+        String analysisId = UUID.randomUUID().toString();
+        String fileName = "pasted-dump.txt";
 
-            AnalysisResult result = orchestrator.analyzeFromText(analysisId, fileName, request.content());
-            storageService.store(analysisId, result);
+        AnalysisResult result = orchestrator.analyzeFromText(analysisId, fileName, request.content());
+        storageService.store(analysisId, result);
 
-            return ResponseEntity.ok(new UploadResponse(
-                result.analysisId(),
-                result.fileName(),
-                result.totalThreads(),
-                result.parseTimeMs(),
-                result.jvmVersion(),
-                result.analyzedAt()
-            ));
-        } catch (Exception e) {
-            log.error("Failed to analyze pasted content", e);
-            return ResponseEntity.internalServerError().build();
-        }
+        return ResponseEntity.ok(toResponse(result));
+    }
+
+    private static UploadResponse toResponse(AnalysisResult result) {
+        return new UploadResponse(
+            result.analysisId(),
+            result.fileName(),
+            result.totalThreads(),
+            result.parseTimeMs(),
+            result.jvmVersion(),
+            result.analyzedAt()
+        );
     }
 }

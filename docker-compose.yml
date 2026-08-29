@@ -4,7 +4,8 @@ services:
     container_name: threadscope-backend
     restart: unless-stopped
     environment:
-      - JAVA_OPTS=-Xms256m -Xmx512m
+      # ExitOnOutOfMemoryError: OOM 时立即退出，由 restart 策略拉起，避免僵死
+      - JAVA_OPTS=-Xms256m -Xmx512m -XX:+ExitOnOutOfMemoryError
     expose:
       - "8080"
     healthcheck:

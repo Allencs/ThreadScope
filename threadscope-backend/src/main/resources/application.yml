@@ -7,17 +7,31 @@ spring:
   servlet:
     multipart:
       enabled: true
-      max-file-size: 500MB
-      max-request-size: 500MB
+      # 与 -Xmx512m 的堆上限对齐：50MB 文本解析后的对象图已接近堆容量
+      max-file-size: 50MB
+      max-request-size: 50MB
       file-size-threshold: 2KB
   jackson:
     serialization:
       write-dates-as-timestamps: false
     default-property-inclusion: non_null
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
 threadscope:
+  cors:
+    # 仅本地开发需要跨域；生产经 nginx 同源代理
+    allowed-origins: http://localhost:5173
   analysis:
-    cache-max-size: 100
-    cache-expire-minutes: 60
-    parse-timeout-seconds: 30
     max-threads-per-dump: 50000
+    parse-timeout-seconds: 30
+    # 缓存驱逐按"线程总数"加权：所有缓存条目的线程数之和不超过该值
+    cache-max-total-threads: 150000
+    cache-expire-minutes: 60

@@ -57,9 +57,9 @@ public final class DumpPatterns {
         "(?:cpu=(\\S+?)\\s+)?" +                      // 7: CPU time (optional)
         "(?:elapsed=(\\S+?)\\s+)?" +                  // 8: elapsed (optional)
         "tid=(0x[0-9a-fA-F]+)\\s+" +                  // 9: tid
-        "nid=(0x[0-9a-fA-F]+|\\d+)\\s+" +            // 10: nid (hex with 0x OR plain decimal)
-        "(\\S+(?:\\s+\\S+)*)?" +                      // 11: state description
-        "(?:\\s+\\[(0x[0-9a-fA-F]+)])?"               // 12: stack address (optional)
+        "nid=(0x[0-9a-fA-F]+|\\d+)" +                 // 10: nid (hex with 0x OR plain decimal)
+        "(?:\\s+([^\\[]*[^\\s\\[]))?" +               // 11: state description (stops before stack address)
+        "(?:\\s+\\[(0x[0-9a-fA-F]+)])?\\s*"           // 12: stack address (optional)
     );
 
     /**
@@ -68,7 +68,8 @@ public final class DumpPatterns {
      *        "Thread-1" #10 [99] daemon prio=5 ... nid=99 waiting
      */
     public static final Pattern THREAD_HEADER_SIMPLE = Pattern.compile(
-        "^\"(.+?)\"\\s+.*?nid=(0x[0-9a-fA-F]+|\\d+)\\s+(\\S+)"
+        // 线程名用 [^"]+ 而非 .+?，中段排除引号字符 — 避免恶意输入触发灾难性回溯
+        "^\"([^\"]+)\"[^\"]*?\\bnid=(0x[0-9a-fA-F]+|\\d+)\\s+(\\S+)"
     );
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -82,9 +83,12 @@ public final class DumpPatterns {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  堆栈帧
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    /** 匹配 "at com.example.Service.method(Service.java:42)" */
+    /**
+     * 匹配 "at com.example.Service.method(Service.java:42)"。
+     * 方法名允许 $ 和尖括号 — 覆盖 lambda$run$0、access$100、&lt;init&gt;、&lt;clinit&gt; 等合成/特殊方法。
+     */
     public static final Pattern STACK_FRAME = Pattern.compile(
-        "^\\s+at\\s+(\\S+)\\.(\\w+)\\((.+?)\\)"
+        "^\\s+at\\s+(\\S+)\\.([\\w$<>]+)\\((.+?)\\)"
     );
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

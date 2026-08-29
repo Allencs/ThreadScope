@@ -38,9 +38,12 @@ onMounted(async () => {
   loadTopData()
 })
 
+const topError = ref('')
+
 async function loadTopData() {
   if (!store.analysisId) return
   topLoading.value = true
+  topError.value = ''
   try {
     const [threadsRes, poolsRes, methodsRes, locksRes] = await Promise.all([
       api.fetchThreads(store.analysisId, { sort: 'stackDepth', page: 1, size: 10 }),
@@ -52,6 +55,9 @@ async function loadTopData() {
     topPools.value = poolsRes.pools.sort((a, b) => b.totalThreads - a.totalThreads).slice(0, 10)
     topMethods.value = methodsRes.hotspots
     topLocks.value = locksRes.lockInfos.sort((a, b) => b.waitingThreadNames.length - a.waitingThreadNames.length).slice(0, 10)
+  } catch (e) {
+    // 不能让 Promise.all 的失败变成 unhandled rejection：表格空白且无任何提示
+    topError.value = e instanceof Error ? e.message : 'Failed to load dashboard data'
   } finally {
     topLoading.value = false
   }
@@ -410,6 +416,12 @@ const tabs = [
             @click="activeTab = tab.key as typeof activeTab"
           >{{ tab.label }}</button>
         </div>
+      </div>
+
+      <!-- ── 加载失败提示 ── -->
+      <div v-if="topError" class="top-error">
+        <span>{{ topError }}</span>
+        <button class="tab-btn" @click="loadTopData()">Retry</button>
       </div>
 
       <!-- ── Tab: Threads (by stack depth) ── -->
@@ -925,6 +937,19 @@ function detectPool(threadName: string): string {
   align-items: center;
   gap: var(--ts-space-lg);
   margin-bottom: var(--ts-space-md);
+}
+
+.top-error {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-space-md);
+  padding: var(--ts-space-sm) var(--ts-space-md);
+  margin-bottom: var(--ts-space-md);
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--ts-radius-md);
+  color: var(--ts-danger);
+  font-size: var(--ts-font-size-sm);
 }
 
 /* ── Tab bar ── */

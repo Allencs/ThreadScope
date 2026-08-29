@@ -157,9 +157,9 @@ public class HealthChecker {
                     "POOL_EXHAUSTION",
                     HealthLevel.WARNING,
                     "线程池 " + pool.poolName() + " 接近耗尽",
-                    String.format("线程池 '%s' (%s) 共 %d 个线程，其中 %d 个活跃(%.0f%%)。池接近饱和可能导致请求排队。",
+                    String.format("线程池 '%s' (%s) 共 %d 个线程，其中 %d 个非空闲(%.0f%%，RUNNABLE %d 个 / BLOCKED %d 个)。池接近饱和可能导致请求排队。",
                         pool.poolName(), pool.poolType(), pool.totalThreads(),
-                        pool.activeCount(), utilization),
+                        pool.busyCount(), utilization, pool.activeCount(), pool.blockedCount()),
                     pool.threadNames().stream().limit(5).toList()
                 ));
             }

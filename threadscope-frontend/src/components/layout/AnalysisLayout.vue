@@ -2,7 +2,7 @@
 /**
  * AnalysisLayout — Main analysis frame with topbar, sidebar, content, and statusbar.
  */
-import { ref, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
 
@@ -20,13 +20,28 @@ const navItems = [
   { name: 'hotspots', label: 'Hotspots' },
 ]
 
-onMounted(async () => {
-  const analysisId = route.params.analysisId as string
-  if (analysisId && !store.overview) {
-    store.analysisId = analysisId
-    await store.loadOverview()
-  }
-})
+// 监听路由中的 analysisId：
+// 1. 刷新页面时加载 overview
+// 2. 直接打开另一个分析的 URL 时，重置旧数据再加载，避免展示上一个分析的内容
+// 3. analysisId 无效/过期时回到上传页
+watch(
+  () => route.params.analysisId as string | undefined,
+  async (id) => {
+    if (!id) return
+    const switched = store.analysisId !== null && store.analysisId !== id
+    if (!switched && store.overview) return // 同一分析且已加载
+
+    if (switched) store.reset()
+    store.analysisId = id
+    try {
+      await store.loadOverview()
+    } catch {
+      store.reset()
+      router.push('/')
+    }
+  },
+  { immediate: true },
+)
 
 function navigateTo(name: string) {
   const analysisId = route.params.analysisId as string

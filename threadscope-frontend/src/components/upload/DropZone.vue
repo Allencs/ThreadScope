@@ -3,22 +3,33 @@
  * DropZone — 全屏拖拽上传 & 粘贴入口。
  * ThreadScope 的首页，也是用户旅程的起点。
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
 
 const router = useRouter()
 const store = useAnalysisStore()
 
-const isDragging = ref(false)
+/** 与后端 multipart 上限、nginx client_max_body_size 保持一致 */
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+// dragenter/dragleave 会在进出子元素时反复触发，用计数器避免高亮态闪烁
+const dragDepth = ref(0)
+const isDragging = computed(() => dragDepth.value > 0)
 const isUploading = ref(false)
 const showPasteModal = ref(false)
 const pasteContent = ref('')
 const errorMsg = ref('')
 const fileInput = ref<HTMLInputElement>()
 
+const uploadingLabel = computed(() =>
+  store.uploadProgress > 0 && store.uploadProgress < 100
+    ? `Uploading... ${store.uploadProgress}%`
+    : 'Analyzing...'
+)
+
 async function handleFileDrop(e: DragEvent) {
-  isDragging.value = false
+  dragDepth.value = 0
   const files = e.dataTransfer?.files
   if (files && files.length > 0) {
     await analyzeFile(files[0])
@@ -33,13 +44,17 @@ async function handleFileSelect(e: Event) {
 }
 
 async function analyzeFile(file: File) {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    errorMsg.value = `File is ${(file.size / 1024 / 1024).toFixed(1)}MB — exceeds the 50MB limit`
+    return
+  }
   isUploading.value = true
   errorMsg.value = ''
   try {
     await store.uploadFile(file)
     router.push(`/analysis/${store.analysisId}/dashboard`)
-  } catch (e: any) {
-    errorMsg.value = e.message || 'Failed to analyze file'
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : 'Failed to analyze file'
   } finally {
     isUploading.value = false
   }
@@ -47,16 +62,21 @@ async function analyzeFile(file: File) {
 
 async function handlePaste() {
   if (!pasteContent.value.trim()) return
+  if (pasteContent.value.length > MAX_UPLOAD_BYTES) {
+    errorMsg.value = 'Pasted content exceeds the 50MB limit — please upload it as a file'
+    return
+  }
   isUploading.value = true
   errorMsg.value = ''
   try {
     await store.pasteContent(pasteContent.value)
+    // 仅成功时关闭弹窗；失败时保留内容和错误提示
+    showPasteModal.value = false
     router.push(`/analysis/${store.analysisId}/dashboard`)
-  } catch (e: any) {
-    errorMsg.value = e.message || 'Failed to analyze pasted content'
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : 'Failed to analyze pasted content'
   } finally {
     isUploading.value = false
-    showPasteModal.value = false
   }
 }
 </script>
@@ -88,8 +108,9 @@ async function handlePaste() {
       <div
         class="drop-area animate-card-enter"
         :class="{ 'drop-area--dragging': isDragging, 'drop-area--uploading': isUploading }"
-        @dragover.prevent="isDragging = true"
-        @dragleave="isDragging = false"
+        @dragover.prevent
+        @dragenter.prevent="dragDepth++"
+        @dragleave="dragDepth = Math.max(0, dragDepth - 1)"
         @drop.prevent="handleFileDrop"
         @click="fileInput?.click()"
       >
@@ -103,7 +124,7 @@ async function handlePaste() {
 
         <div v-if="isUploading" class="drop-uploading">
           <div class="spinner"></div>
-          <span>Analyzing...</span>
+          <span>{{ uploadingLabel }}</span>
         </div>
         <div v-else class="drop-idle">
           <div class="drop-icon">
@@ -145,6 +166,9 @@ async function handlePaste() {
             placeholder='Paste "Full thread dump..." content here...'
             rows="16"
           ></textarea>
+          <div v-if="errorMsg" class="error-banner" style="margin-top: var(--ts-space-sm)">
+            {{ errorMsg }}
+          </div>
           <div class="modal-actions">
             <button class="btn-secondary" @click="showPasteModal = false">Cancel</button>
             <button class="btn-primary" @click="handlePaste" :disabled="!pasteContent.trim()">

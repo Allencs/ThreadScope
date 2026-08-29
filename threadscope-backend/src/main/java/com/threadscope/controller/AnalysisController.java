@@ -17,6 +17,9 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/v1/analysis/{analysisId}")
 public class AnalysisController {
 
+    private static final int MAX_PAGE_SIZE = 1000;
+    private static final int MAX_BATCH_NAMES = 500;
+
     private final AnalysisStorageService storageService;
 
     public AnalysisController(AnalysisStorageService storageService) {
@@ -67,12 +70,16 @@ public class AnalysisController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "50") int size) {
 
+        // 分页参数防护：page 至少为 1，size 限制在 [1, MAX_PAGE_SIZE]
+        page = Math.max(1, page);
+        size = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+
         AnalysisResult result = storageService.getOrThrow(analysisId);
         List<ThreadInfo> filtered = result.threads();
 
         // 按线程池名过滤
         if (poolName != null && !poolName.isBlank()) {
-            Set<String> poolThreadNames = result.threadPools().stream()
+            Set<String> poolThreadNames = safeList(result.threadPools()).stream()
                 .filter(p -> p.poolName().equals(poolName))
                 .flatMap(p -> p.threadNames().stream())
                 .collect(Collectors.toSet());
@@ -162,6 +169,9 @@ public class AnalysisController {
             @RequestBody Map<String, List<String>> body) {
         AnalysisResult result = storageService.getOrThrow(analysisId);
         List<String> names = body.getOrDefault("names", List.of());
+        if (names.size() > MAX_BATCH_NAMES) {
+            throw new IllegalArgumentException("Batch size exceeds the maximum of " + MAX_BATCH_NAMES + " names");
+        }
         Set<String> nameSet = new HashSet<>(names);
 
         List<ThreadInfo> matched = result.threads().stream()
@@ -236,7 +246,7 @@ public class AnalysisController {
             @RequestParam(defaultValue = "2") int minGroupSize) {
         AnalysisResult result = storageService.getOrThrow(analysisId);
 
-        List<StackAggregateGroup> filtered = result.stackAggregations().stream()
+        List<StackAggregateGroup> filtered = safeList(result.stackAggregations()).stream()
             .filter(g -> g.threadCount() >= minGroupSize)
             .toList();
 
@@ -258,7 +268,7 @@ public class AnalysisController {
         AnalysisResult result = storageService.getOrThrow(analysisId);
 
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("hotspots", result.methodHotspots().stream().limit(topN).toList());
+        response.put("hotspots", safeList(result.methodHotspots()).stream().limit(Math.max(0, topN)).toList());
 
         return ResponseEntity.ok(response);
     }
@@ -266,6 +276,10 @@ public class AnalysisController {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  辅助方法
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    private static <T> List<T> safeList(List<T> list) {
+        return list != null ? list : List.of();
+    }
 
     private boolean matchesSearch(ThreadInfo thread, String query) {
         // 搜索线程名

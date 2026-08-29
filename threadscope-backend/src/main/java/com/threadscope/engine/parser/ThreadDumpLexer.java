@@ -1,9 +1,10 @@
 package com.threadscope.engine.parser;
 
 import com.threadscope.engine.pattern.DumpPatterns;
-import com.threadscope.model.*;
+import com.threadscope.exception.DumpTooLargeException;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.regex.Matcher;
 
@@ -20,6 +21,23 @@ import java.util.regex.Matcher;
  *   任意状态遇到 "Found...deadlock" → DEADLOCK_SECTION
  */
 public class ThreadDumpLexer {
+
+    /**
+     * 单行长度上限 — 合法 dump 的行远短于此值。
+     * 超长行直接跳过，防止恶意输入触发正则灾难性回溯 (ReDoS)。
+     */
+    private static final int MAX_LINE_LENGTH = 10_000;
+
+    /** 线程数上限，超出即中止解析。 */
+    private final int maxThreads;
+
+    public ThreadDumpLexer() {
+        this(Integer.MAX_VALUE);
+    }
+
+    public ThreadDumpLexer(int maxThreads) {
+        this.maxThreads = maxThreads;
+    }
 
     /**
      * 词法分析器的内部状态
@@ -60,7 +78,7 @@ public class ThreadDumpLexer {
      * @return 词法分析结果
      */
     public LexerResult tokenize(InputStream inputStream) throws IOException {
-        try (var reader = new BufferedReader(new InputStreamReader(inputStream))) {
+        try (var reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
             return tokenize(reader);
         }
     }
@@ -95,19 +113,31 @@ public class ThreadDumpLexer {
         String line;
         while ((line = reader.readLine()) != null) {
 
+            // ─── 防护：超长行直接跳过 (防止正则回溯攻击) ───
+            if (line.length() > MAX_LINE_LENGTH) {
+                continue;
+            }
+
             // ─── 跳过 "Threads class SMR info:" 段 (JDK 17+) ───
             if (line.startsWith("Threads class SMR info:")) {
                 inSmrSection = true;
                 continue;
             }
             if (inSmrSection) {
-                // SMR段以 "}" 结尾或空行结束
+                // SMR段以 "}" 或空行结束
                 if (line.contains("}") || DumpPatterns.BLANK_LINE.matcher(line).matches()) {
-                    if (line.contains("}")) {
-                        inSmrSection = false;
-                    }
+                    inSmrSection = false;
+                    continue;
                 }
-                continue;
+                // 防御：某些 JDK 变体的 SMR 段无 "}" 结尾。
+                // 遇到疑似线程头 (以双引号开头) 时强制退出，按正常流程处理该行，
+                // 避免吞掉其后的全部线程块。
+                if (line.startsWith("\"")) {
+                    inSmrSection = false;
+                    // fall through — 继续走线程头检测
+                } else {
+                    continue;
+                }
             }
 
             // ─── 全局检测：死锁段开始 ───
@@ -248,6 +278,10 @@ public class ThreadDumpLexer {
             List<String> body,
             List<String> ownableSync) {
         if (header != null) {
+            if (blocks.size() >= maxThreads) {
+                throw new DumpTooLargeException(
+                    "Dump exceeds the maximum of " + maxThreads + " threads");
+            }
             blocks.add(new RawThreadBlock(header, stateLine, List.copyOf(body), List.copyOf(ownableSync)));
         }
     }

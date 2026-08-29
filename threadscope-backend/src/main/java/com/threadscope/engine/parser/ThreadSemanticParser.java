@@ -196,7 +196,8 @@ public class ThreadSemanticParser {
         String lower = desc.toLowerCase();
         if (lower.contains("runnable")) return ThreadState.RUNNABLE;
         if (lower.contains("blocked")) return ThreadState.BLOCKED;
-        if (lower.contains("waiting on condition")) return ThreadState.TIMED_WAITING;
+        // "waiting on condition" 在 HotSpot 中对应 WAITING 或 TIMED_WAITING，无法区分时保守标 WAITING
+        if (lower.contains("waiting on condition")) return ThreadState.WAITING;
         if (lower.contains("in object.wait")) return ThreadState.WAITING;
         if (lower.contains("sleeping")) return ThreadState.TIMED_WAITING;
         return ThreadState.UNKNOWN;

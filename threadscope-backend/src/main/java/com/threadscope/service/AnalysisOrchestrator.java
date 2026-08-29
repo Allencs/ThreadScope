@@ -1,5 +1,6 @@
 package com.threadscope.service;
 
+import com.threadscope.config.AnalysisProperties;
 import com.threadscope.engine.analyzer.*;
 import com.threadscope.engine.parser.*;
 import com.threadscope.model.*;
@@ -27,7 +28,7 @@ public class AnalysisOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(AnalysisOrchestrator.class);
 
-    private final ThreadDumpLexer lexer = new ThreadDumpLexer();
+    private final ThreadDumpLexer lexer;
     private final ThreadSemanticParser semanticParser = new ThreadSemanticParser();
     private final DeadlockDetector deadlockDetector = new DeadlockDetector();
     private final LockGraphBuilder lockGraphBuilder = new LockGraphBuilder();
@@ -35,6 +36,13 @@ public class AnalysisOrchestrator {
     private final StackAggregator stackAggregator = new StackAggregator();
     private final MethodHotspotAnalyzer methodHotspotAnalyzer = new MethodHotspotAnalyzer();
     private final HealthChecker healthChecker = new HealthChecker();
+
+    private final int engineTimeoutSeconds;
+
+    public AnalysisOrchestrator(AnalysisProperties properties) {
+        this.lexer = new ThreadDumpLexer(properties.maxThreadsPerDump());
+        this.engineTimeoutSeconds = properties.parseTimeoutSeconds();
+    }
 
     /**
      * 完整分析流程: 从 InputStream 到 AnalysisResult。
@@ -122,12 +130,25 @@ public class AnalysisOrchestrator {
             var hotspotFuture = executor.submit(() ->
                 methodHotspotAnalyzer.analyze(threads, 20, null));
 
-            // 等待所有分析完成
-            DeadlockInfo deadlocks = deadlockFuture.get(10, TimeUnit.SECONDS);
-            List<LockInfo> lockInfos = lockGraphFuture.get(10, TimeUnit.SECONDS);
-            List<ThreadPoolInfo> threadPools = threadPoolFuture.get(10, TimeUnit.SECONDS);
-            List<StackAggregateGroup> stackAggs = stackAggFuture.get(10, TimeUnit.SECONDS);
-            List<MethodHotspot> hotspots = hotspotFuture.get(10, TimeUnit.SECONDS);
+            List<Future<?>> engineFutures = List.of(
+                deadlockFuture, lockGraphFuture, threadPoolFuture, stackAggFuture, hotspotFuture);
+
+            // 等待所有分析完成 (超时可配置；超时/失败时取消其余任务，避免后台空转)
+            DeadlockInfo deadlocks;
+            List<LockInfo> lockInfos;
+            List<ThreadPoolInfo> threadPools;
+            List<StackAggregateGroup> stackAggs;
+            List<MethodHotspot> hotspots;
+            try {
+                deadlocks = deadlockFuture.get(engineTimeoutSeconds, TimeUnit.SECONDS);
+                lockInfos = lockGraphFuture.get(engineTimeoutSeconds, TimeUnit.SECONDS);
+                threadPools = threadPoolFuture.get(engineTimeoutSeconds, TimeUnit.SECONDS);
+                stackAggs = stackAggFuture.get(engineTimeoutSeconds, TimeUnit.SECONDS);
+                hotspots = hotspotFuture.get(engineTimeoutSeconds, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                engineFutures.forEach(f -> f.cancel(true));
+                throw e;
+            }
 
             // 健康检查 (依赖上面的结果)
             HealthReport healthReport = healthChecker.check(threads, deadlocks, lockInfos, threadPools);

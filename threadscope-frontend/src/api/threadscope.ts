@@ -12,23 +12,66 @@ import type {
   MethodHotspot,
 } from '@/types'
 
+/** 后端统一错误体（GlobalExceptionHandler.ErrorResponse） */
+interface ApiErrorBody {
+  code?: string
+  message?: string
+}
+
 const api = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
 })
 
+/** 上传/粘贴的解析耗时更长，与 nginx proxy_read_timeout (120s) 对齐 */
+const UPLOAD_TIMEOUT_MS = 120000
+
+/**
+ * 统一错误转换：优先取后端错误体的 message，
+ * 否则将超时/网络错误映射为可读文案（而不是 "timeout of 30000ms exceeded"）。
+ */
+function toFriendlyError(error: unknown): Error {
+  if (axios.isAxiosError<ApiErrorBody>(error)) {
+    if (error.response?.data?.message) return new Error(error.response.data.message)
+    if (error.code === 'ECONNABORTED') {
+      return new Error('Request timed out — the dump may be too large or the server is busy')
+    }
+    if (error.response) {
+      if (error.response.status === 413) return new Error('Dump exceeds the 50MB size limit')
+      return new Error(`Request failed (HTTP ${error.response.status})`)
+    }
+    return new Error('Network error — unable to reach the server')
+  }
+  return error instanceof Error ? error : new Error(String(error))
+}
+
+api.interceptors.response.use(undefined, (error) => Promise.reject(toFriendlyError(error)))
+
 // ── Upload ──
-export async function uploadDump(file: File): Promise<UploadResponse> {
+export async function uploadDump(
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<UploadResponse> {
   const formData = new FormData()
   formData.append('file', file)
+  // 不手动设置 Content-Type：交给浏览器生成带 boundary 的 multipart 头
   const { data } = await api.post<UploadResponse>('/dump/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: UPLOAD_TIMEOUT_MS,
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+    },
   })
   return data
 }
 
 export async function pasteDump(content: string): Promise<UploadResponse> {
-  const { data } = await api.post<UploadResponse>('/dump/paste', { content })
+  const { data } = await api.post<UploadResponse>(
+    '/dump/paste',
+    { content },
+    { timeout: UPLOAD_TIMEOUT_MS }
+  )
   return data
 }
 

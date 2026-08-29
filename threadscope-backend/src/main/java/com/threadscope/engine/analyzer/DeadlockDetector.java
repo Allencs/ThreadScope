@@ -3,7 +3,6 @@ package com.threadscope.engine.analyzer;
 import com.threadscope.model.*;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * 死锁检测器 — 基于有向图环检测算法。
@@ -67,46 +66,42 @@ public class DeadlockDetector {
             }
         }
 
-        // DFS 检测环
+        // 三色 DFS 检测环：
+        //   白 = 未访问；灰 = 在当前路径上 (indexInPath)；黑 = 已探索完毕 (done)。
+        // 每个线程至多等待一把锁 (函数式图)，因此从每个白色节点沿唯一出边前进即可：
+        //   - 撞到灰色节点 → 找到环
+        //   - 撞到黑色节点 → 该方向已探索过，不会有新环
+        // 只有确认无环后才把路径标黑，避免"过早标记 visited"导致的漏检。
         List<DeadlockInfo.DeadlockChain> chains = new ArrayList<>();
-        Set<String> visited = new HashSet<>();
+        Set<String> done = new HashSet<>();
 
         for (String startThread : threadWaiting.keySet()) {
-            if (visited.contains(startThread)) continue;
+            if (done.contains(startThread)) continue;
 
             List<String> path = new ArrayList<>();
-            Set<String> pathSet = new HashSet<>();
+            Map<String, Integer> indexInPath = new HashMap<>();
             String current = startThread;
-            boolean foundCycle = false;
+            String cycleEntry = null;
 
             while (current != null) {
-                // 如果 current 已在当前路径中 → 检测到环
-                if (pathSet.contains(current)) {
-                    foundCycle = true;
+                if (indexInPath.containsKey(current)) {
+                    cycleEntry = current;               // 灰色节点 → 环
                     break;
                 }
+                if (done.contains(current)) break;      // 黑色节点 → 无新环
 
+                indexInPath.put(current, path.size());
                 path.add(current);
-                pathSet.add(current);
-                visited.add(current);
 
-                // current 线程等待的锁 → 该锁的持有者
                 String waitLock = threadWaiting.get(current);
-                if (waitLock == null) break;     // 当前线程不在等待任何锁 → 不可能构成死锁
-                String holder = lockHolders.get(waitLock);
-                if (holder == null) break;       // 没找到持有者 → 链断开
-
-                // 持有者本身也必须在等待某个锁，才可能构成死锁环
-                // 如果持有者没有 WaitingToLock，则链到此为止，不是死锁
-                if (!threadWaiting.containsKey(holder)) break;
-
-                current = holder;
+                if (waitLock == null) break;            // 当前线程不在等待任何锁
+                current = lockHolders.get(waitLock);    // 锁的持有者 (可能为 null → 链断开)
             }
 
-            // 仅在真正检测到环时才报告（至少2个线程参与）
-            if (foundCycle) {
-                int cycleStart = path.indexOf(current);
-                List<String> cycle = new ArrayList<>(path.subList(cycleStart, path.size()));
+            done.addAll(path);
+
+            if (cycleEntry != null) {
+                List<String> cycle = List.copyOf(path.subList(indexInPath.get(cycleEntry), path.size()));
 
                 if (cycle.size() >= 2) {
                     List<String> cycleLocks = cycle.stream()
@@ -114,7 +109,7 @@ public class DeadlockDetector {
                         .filter(Objects::nonNull)
                         .toList();
 
-                    String desc = "Deadlock detected: " + String.join(" → ", cycle) + " → " + current;
+                    String desc = "Deadlock detected: " + String.join(" → ", cycle) + " → " + cycleEntry;
                     chains.add(new DeadlockInfo.DeadlockChain(cycle, cycleLocks, desc));
                 }
             }
@@ -125,6 +120,8 @@ public class DeadlockDetector {
 
     /**
      * 解析 JVM 自报告的死锁段。
+     * dump 中可能有多段 "Found one Java-level deadlock:"，按段头切分为独立的死锁链，
+     * 避免把多个死锁合并成一条。
      */
     private List<DeadlockInfo.DeadlockChain> parseJvmDeadlockSection(List<String> lines) {
         List<DeadlockInfo.DeadlockChain> chains = new ArrayList<>();
@@ -132,9 +129,20 @@ public class DeadlockDetector {
         List<String> currentLocks = new ArrayList<>();
 
         for (String line : lines) {
+            // 新的死锁段开始 → 先保存上一条链
+            if (com.threadscope.engine.pattern.DumpPatterns.DEADLOCK_HEADER.matcher(line).find()) {
+                flushJvmChain(chains, currentThreads, currentLocks);
+                currentThreads = new ArrayList<>();
+                currentLocks = new ArrayList<>();
+                continue;
+            }
+
             var threadRef = com.threadscope.engine.pattern.DumpPatterns.DEADLOCK_THREAD_REF.matcher(line);
             if (threadRef.find()) {
-                currentThreads.add(threadRef.group(1));
+                // 同一线程在段内出现多次 (堆栈重复段) 时去重
+                if (!currentThreads.contains(threadRef.group(1))) {
+                    currentThreads.add(threadRef.group(1));
+                }
             }
 
             var lockRef = com.threadscope.engine.pattern.DumpPatterns.DEADLOCK_WAITING_LOCK.matcher(line);
@@ -143,14 +151,20 @@ public class DeadlockDetector {
             }
         }
 
-        if (!currentThreads.isEmpty()) {
+        flushJvmChain(chains, currentThreads, currentLocks);
+        return chains;
+    }
+
+    private void flushJvmChain(
+            List<DeadlockInfo.DeadlockChain> chains,
+            List<String> threads,
+            List<String> locks) {
+        if (!threads.isEmpty()) {
             chains.add(new DeadlockInfo.DeadlockChain(
-                currentThreads, currentLocks,
-                "JVM reported deadlock involving: " + String.join(", ", currentThreads)
+                List.copyOf(threads), List.copyOf(locks),
+                "JVM reported deadlock involving: " + String.join(", ", threads)
             ));
         }
-
-        return chains;
     }
 
     private List<DeadlockInfo.DeadlockChain> deduplicateChains(List<DeadlockInfo.DeadlockChain> chains) {
