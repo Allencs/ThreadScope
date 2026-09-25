@@ -2,8 +2,9 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+ARG NPM_REGISTRY=https://registry.npmjs.org
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --registry=${NPM_REGISTRY}
 
 COPY . .
 RUN npm run build
