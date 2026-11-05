@@ -7,10 +7,12 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
-import { STATE_LABELS, type ThreadState, type ThreadInfo, type LockAction, type LockInfo } from '@/types'
+import { STATE_LABELS, type ThreadState, type ThreadInfo, type LockInfo } from '@/types'
 import * as api from '@/api/threadscope'
+import StackTraceView from '@/components/common/StackTraceView.vue'
 
-const props = defineProps<{ threadName: string }>()
+/** threadRef: 线程标识 (key) 或线程名 */
+const props = defineProps<{ threadRef: string }>()
 
 const store = useAnalysisStore()
 const route = useRoute()
@@ -40,7 +42,8 @@ async function loadThread() {
   loading.value = true
   error.value = null
   try {
-    thread.value = await api.fetchThread(store.analysisId, props.threadName)
+    thread.value = await api.fetchThread(store.analysisId, props.threadRef)
+    store.renameThreadDetailTab(props.threadRef, thread.value.name)
   } catch (e: any) {
     error.value = e.message || 'Failed to load thread'
   } finally {
@@ -64,61 +67,16 @@ function getStateBadgeClass(state: ThreadState): string {
   return state === 'BLOCKED' ? 'state-pulse-danger' : ''
 }
 
-function getLockActionsForFrame(t: ThreadInfo, frameIdx: number): LockAction[] {
-  return t.lockActions.filter(la => la.frameIndex === frameIdx)
-}
-
-function getLockActionLabel(lock: LockAction): string {
-  switch (lock.type) {
-    case 'Held': return '- locked'
-    case 'WaitingToLock': return '- waiting to lock'
-    case 'ParkingToWaitFor': return '- parking to wait for'
-    case 'WaitingOn': return '- waiting on'
-    default: return '- lock operation'
-  }
-}
-
-function getLockActionCssClass(lock: LockAction): string {
-  switch (lock.type) {
-    case 'Held': return 'lock-action--held'
-    case 'WaitingToLock': return 'lock-action--blocked'
-    case 'ParkingToWaitFor': return 'lock-action--parking'
-    case 'WaitingOn': return 'lock-action--waiting'
-    default: return ''
-  }
-}
-
 function navigateToLock(lockAddress: string) {
   store.highlightLockAddress = lockAddress
   router.push({ name: 'locks', params: { analysisId: route.params.analysisId } })
 }
 
-function getLockContentionInfo(lock: LockAction): LockInfo | null {
-  if (lock.type !== 'Held') return null
-  return lockMap.value[lock.lockAddress] ?? null
+function openCarrier(carrierKey: string) {
+  store.openThreadDetailTab(carrierKey)
 }
 
-function getLockTypeLabel(className: string): { tag: string; detail: string } {
-  if (className.includes('ConditionObject'))
-    return { tag: 'Condition', detail: 'Condition 条件等待' }
-  if (className.includes('SynchronousQueue'))
-    return { tag: 'Queue', detail: '同步队列' }
-  if (className.includes('LinkedBlockingQueue') || className.includes('ArrayBlockingQueue') || className.includes('BlockingQueue'))
-    return { tag: 'Queue', detail: '阻塞队列' }
-  if (className.includes('CountDownLatch'))
-    return { tag: 'Latch', detail: 'CountDownLatch' }
-  if (className.includes('Semaphore'))
-    return { tag: 'Semaphore', detail: '信号量' }
-  if (className.includes('FutureTask') || className.includes('CompletableFuture'))
-    return { tag: 'Future', detail: '异步等待' }
-  if (className.includes('ReentrantReadWriteLock'))
-    return { tag: 'RWLock', detail: '读写锁' }
-  if (className.includes('ReentrantLock') || className.includes('NonfairSync') || className.includes('FairSync'))
-    return { tag: 'Lock', detail: 'ReentrantLock' }
-  if (className.includes('AbstractQueuedSynchronizer') || className.includes('AbstractOwnableSynchronizer'))
-    return { tag: 'AQS', detail: 'AQS 同步器' }
-  return { tag: 'Monitor', detail: 'synchronized 同步锁' }
-}
+const kindLabel: Record<string, string> = { VIRTUAL: '虚拟线程', CARRIER: '载体线程' }
 </script>
 
 <template>
@@ -150,7 +108,11 @@ function getLockTypeLabel(className: string): { tag: string; detail: string } {
           {{ STATE_LABELS[thread.state] }}
         </span>
         <h3 class="detail-title mono">{{ thread.name }}</h3>
+        <span v-if="thread.kind !== 'PLATFORM'" class="kind-tag" :class="'kind-tag--' + thread.kind.toLowerCase()">
+          {{ kindLabel[thread.kind] }}
+        </span>
         <span v-if="thread.daemon" class="daemon-tag">daemon</span>
+        <span v-if="thread.stateInferred" class="inferred-tag" title="jcmd 导出不含线程状态，此状态由栈顶推断">状态推断</span>
         <span
           v-if="thread.stackTrace?.length"
           class="stack-depth-badge mono"
@@ -182,13 +144,29 @@ function getLockTypeLabel(className: string): { tag: string; detail: string } {
           <span class="meta-value mono">{{ thread.elapsed }}</span>
         </div>
         <div class="meta-item">
+          <span class="meta-label">ID</span>
+          <span class="meta-value mono accent">{{ thread.key }}</span>
+        </div>
+        <div v-if="thread.tid && thread.tid !== '0x0'" class="meta-item">
           <span class="meta-label">tid</span>
           <span class="meta-value mono accent">{{ thread.tid }}</span>
         </div>
-        <div class="meta-item">
+        <div v-if="thread.nidDecimal > 0" class="meta-item">
           <span class="meta-label">nid</span>
           <span class="meta-value mono accent">{{ thread.nid }}</span>
           <span class="meta-sub mono">({{ thread.nidDecimal }})</span>
+        </div>
+        <div v-if="thread.carrier" class="meta-item">
+          <span class="meta-label">{{ thread.kind === 'CARRIER' ? '承载虚拟线程' : '载体线程' }}</span>
+          <span
+            class="meta-value mono accent"
+            :class="{ 'meta-link': thread.kind === 'VIRTUAL' }"
+            @click="thread.kind === 'VIRTUAL' && openCarrier(thread.carrier!)"
+          >{{ thread.carrier }}</span>
+        </div>
+        <div v-if="thread.container" class="meta-item">
+          <span class="meta-label">容器</span>
+          <span class="meta-value mono">{{ thread.container }}</span>
         </div>
         <div v-if="thread.stateDetail" class="meta-item">
           <span class="meta-label">Detail</span>
@@ -198,49 +176,12 @@ function getLockTypeLabel(className: string): { tag: string; detail: string } {
 
       <!-- Stack Trace -->
       <div v-if="thread.stackTrace?.length" class="stack-section">
-        <div class="section-header">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="10" y2="12"/>
-          </svg>
-          STACK TRACE ({{ thread.stackTrace.length }} FRAMES)
-        </div>
-        <div class="stack-frames">
-          <template v-for="(frame, idx) in thread.stackTrace" :key="idx">
-            <div
-              class="stack-frame mono"
-              :class="{ 'stack-frame--jdk': frame.className.startsWith('java.') || frame.className.startsWith('sun.') || frame.className.startsWith('jdk.') }"
-            >
-              <span class="frame-idx">{{ idx }}</span>
-              <span class="frame-at">at</span>
-              <!-- 签名整体包成单个 flex item — 父容器是 flex+gap，裸文本 . ( ) 若直接暴露会被当成独立 item 插入间隙 -->
-              <span class="frame-sig"><span class="frame-class">{{ frame.className }}</span>.<span class="frame-method">{{ frame.methodName }}</span>(<span class="frame-source">{{ frame.source }}</span>)</span>
-            </div>
-
-            <div
-              v-for="(lock, lockIdx) in getLockActionsForFrame(thread, idx)"
-              :key="'lock-' + idx + '-' + lockIdx"
-              class="lock-action mono"
-              :class="[getLockActionCssClass(lock), { 'lock-action--contention': getLockContentionInfo(lock)?.waitingThreadNames?.length }]"
-              @click.stop="navigateToLock(lock.lockAddress)"
-              :title="'Click to view lock ' + lock.lockAddress + ' in Locks page'"
-            >
-              <span class="lock-type">{{ getLockActionLabel(lock) }}</span>
-              <!-- 地址与类名包成单个 flex item，避免父容器 gap 在 < > ( ) 文本节点间插缝 -->
-              <span class="lock-target">&lt;<span class="lock-addr">{{ lock.lockAddress }}</span>&gt; (a {{ lock.lockClassName }})</span>
-              <template v-if="getLockContentionInfo(lock)?.waitingThreadNames?.length">
-                <span class="lock-contention-badge">
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                    <path d="M8 1.5L14.5 13H1.5L8 1.5Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
-                    <path d="M8 6v3.5M8 11h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-                  </svg>
-                  {{ getLockTypeLabel(lock.lockClassName).tag }}
-                  · 阻塞 {{ getLockContentionInfo(lock)!.waitingThreadNames.length }} 个线程
-                </span>
-              </template>
-              <span class="lock-goto">→</span>
-            </div>
-          </template>
-        </div>
+        <StackTraceView
+          :frames="thread.stackTrace"
+          :lock-actions="thread.lockActions"
+          :lock-map="lockMap"
+          @navigate-lock="navigateToLock"
+        />
       </div>
 
       <!-- Ownable Synchronizers -->
@@ -420,12 +361,6 @@ function getLockTypeLabel(className: string): { tag: string; detail: string } {
   flex-direction: column;
 }
 
-.stack-section .stack-frames {
-  overflow: auto;
-  flex: 1;
-  min-height: 0;
-}
-
 .section-header {
   display: flex;
   align-items: center;
@@ -440,119 +375,32 @@ function getLockTypeLabel(className: string): { tag: string; detail: string } {
   border-bottom: var(--ts-border);
 }
 
-.stack-frames {
-  padding: var(--ts-space-sm) var(--ts-space-md);
-}
-
-.stack-frame {
-  font-size: 12px;
-  padding: 2px 0;
-  color: var(--ts-text-primary);
-  line-height: 1.7;
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  white-space: nowrap;
-}
-
-.frame-idx {
-  display: inline-block;
-  min-width: 24px;
-  text-align: right;
-  color: var(--ts-text-muted);
-  font-size: 10px;
-  opacity: 0.6;
-  flex-shrink: 0;
-}
-
-.stack-frame--jdk {
-  color: var(--ts-text-muted);
-}
-
-.stack-frame--jdk .frame-class { color: var(--ts-text-muted); }
-.stack-frame--jdk .frame-method { color: var(--ts-text-muted); font-weight: 400; }
-.stack-frame--jdk .frame-source { color: var(--ts-text-muted); }
-
-.frame-at { color: var(--ts-text-muted); }
-.frame-class { color: var(--ts-text-secondary); }
-.frame-method { color: #2563eb; font-weight: 500; }
-.frame-source { color: #16a34a; }
-
-/* ── Lock Actions ── */
-.lock-action {
-  font-size: 12px;
-  padding: 3px 8px 3px 36px;
-  margin: 1px 0;
-  color: var(--ts-text-secondary);
-  line-height: 1.7;
-  cursor: pointer;
-  border-radius: var(--ts-radius-sm);
-  transition: background var(--ts-transition);
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.lock-action:hover { background: var(--ts-bg-hover); }
-
-.lock-action .lock-goto {
-  opacity: 0;
-  font-size: 11px;
-  color: var(--ts-accent);
-  margin-left: 4px;
-  transition: opacity var(--ts-transition);
-}
-
-.lock-action:hover .lock-goto { opacity: 1; }
-
-.lock-type { font-weight: 500; }
-.lock-action--held .lock-type { color: #16a34a; }
-.lock-action--blocked .lock-type { color: #dc2626; }
-.lock-action--parking .lock-type { color: #d97706; }
-.lock-action--waiting .lock-type { color: #d97706; }
-
-.lock-addr {
-  color: var(--ts-accent);
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 2px;
-}
-
-.lock-action:hover .lock-addr { text-decoration-style: solid; }
-
-.lock-contention-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+.kind-tag {
   font-size: 10px;
   font-weight: 600;
   padding: 1px 8px;
-  margin-left: 6px;
   border-radius: var(--ts-radius-full);
-  background: #fef2f2;
-  color: #dc2626;
-  border: 1px solid #fecaca;
-  white-space: nowrap;
-  font-family: var(--ts-font-ui);
-  letter-spacing: 0.2px;
-  line-height: 1.5;
+  flex-shrink: 0;
 }
+.kind-tag--virtual { color: #7c3aed; background: #f5f3ff; border: 1px solid #ddd6fe; }
+.kind-tag--carrier { color: #0e7490; background: #ecfeff; border: 1px solid #a5f3fc; }
 
-.lock-contention-badge svg {
+.inferred-tag {
+  font-size: 10px;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px dashed #fcd34d;
+  border-radius: var(--ts-radius-full);
+  padding: 0 6px;
+  cursor: help;
   flex-shrink: 0;
 }
 
-.lock-action--contention.lock-action--held {
-  background: #fefce8;
-  border-left-color: #dc2626;
-  border-left-width: 3px;
+.meta-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
 }
-
-.lock-action--held { border-left: 2px solid #16a34a; }
-.lock-action--blocked { border-left: 2px solid #dc2626; background: #fef2f2; }
-.lock-action--parking { border-left: 2px solid #d97706; }
-.lock-action--waiting { border-left: 2px solid #d97706; }
 
 /* ── Ownable Synchronizers ── */
 .sync-section {

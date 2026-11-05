@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       # ExitOnOutOfMemoryError: OOM 时立即退出，由 restart 策略拉起，避免僵死
-      - JAVA_OPTS=-Xms256m -Xmx512m -XX:+ExitOnOutOfMemoryError
+      - JAVA_OPTS=-Xms512m -Xmx1024m -XX:+ExitOnOutOfMemoryError
     expose:
       - "8080"
     healthcheck:

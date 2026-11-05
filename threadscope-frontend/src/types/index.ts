@@ -25,6 +25,8 @@ export type LockAction =
   | { type: 'ParkingToWaitFor'; lockAddress: string; lockClassName: string; frameIndex: number }
   | { type: 'WaitingOn'; lockAddress: string; lockClassName: string; frameIndex: number }
 
+export type ThreadKind = 'PLATFORM' | 'VIRTUAL' | 'CARRIER'
+
 export interface ThreadInfo {
   name: string
   threadNumber: number
@@ -33,7 +35,7 @@ export interface ThreadInfo {
   osPriority: number
   cpuTime: string | null
   elapsed: string | null
-  tid: string
+  tid: string | null
   nid: string
   nidDecimal: number
   state: ThreadState
@@ -42,20 +44,34 @@ export interface ThreadInfo {
   stackTrace: StackFrame[]
   lockActions: LockAction[]
   ownableSynchronizers: string[]
+  /** 单份 dump 内唯一的线程标识 (线程名可能重名) */
+  key: string
+  kind: ThreadKind
+  /** VIRTUAL: 所在载体线程；CARRIER: 正在承载的虚拟线程 */
+  carrier?: string | null
+  /** jcmd 导出的线程容器 */
+  container?: string | null
+  /** 状态由栈顶推断 */
+  stateInferred: boolean
 }
 
 export interface ThreadSummary {
   name: string
+  key: string
+  kind: ThreadKind
   state: ThreadState
   daemon: boolean
   stackDepth: number
   hasLockActions: boolean
 }
 
+export type CodeLayer = 'JDK' | 'FRAMEWORK' | 'BUSINESS'
+
 export interface LockInfo {
   lockAddress: string
   lockClassName: string
   holderThreadName: string | null
+  holderThreadKey?: string | null
   waitingThreadNames: string[]
 }
 
@@ -69,12 +85,23 @@ export interface DeadlockInfo {
   chains: DeadlockChain[]
 }
 
+export type PoolCategory =
+  | 'WEB' | 'RPC' | 'DB' | 'MQ' | 'CACHE' | 'SCHEDULER' | 'ASYNC'
+  | 'EVENT_LOOP' | 'VIRTUAL' | 'JVM' | 'LOGGING' | 'CUSTOM' | 'ANONYMOUS'
+
 export interface ThreadPoolInfo {
   poolName: string
   poolType: string
+  category: PoolCategory
   totalThreads: number
   stateDistribution: Record<ThreadState, number>
   threadNames: string[]
+  threadKeys: string[]
+  /** 按栈判定为等新任务的空闲线程 */
+  idleCount: number
+  /** 执行任务中 / 在任务中等资源的线程 */
+  busyCount: number
+  hints: string[]
 }
 
 export interface MethodHotspot {
@@ -108,6 +135,45 @@ export interface HealthReport {
   risks: RiskItem[]
 }
 
+export interface DataQualityIssue {
+  code: string
+  level: 'INFO' | 'WARNING'
+  title: string
+  impact: string
+  suggestion: string
+}
+
+export interface PinnedThread {
+  threadName: string
+  threadKey: string
+  kind: ThreadKind
+  reason: string
+  topFrames: string[]
+  blockingFrame: string | null
+}
+
+export interface VirtualThreadReport {
+  virtualCount: number
+  carrierCount: number
+  mountedCount: number
+  pinnedCount: number
+  jvmMajorVersion: number
+  visibility: 'FULL' | 'MOUNTED_ONLY'
+  virtualStates: Partial<Record<ThreadState, number>>
+  pinned: PinnedThread[]
+  containers: { container: string; count: number; stateDistribution: Partial<Record<ThreadState, number>> }[]
+}
+
+export interface SnapshotRef {
+  index: number
+  analysisId: string
+  timestamp: string | null
+  totalThreads: number
+  healthLevel: RiskItem['level'] | null
+  deadlockCount: number
+  latest: boolean
+}
+
 export interface OverviewData {
   analysisId: string
   fileName: string
@@ -123,6 +189,56 @@ export interface OverviewData {
   threadPoolCount: number
   lockContentionCount: number
   dumpCount: number
+  dumpFormat: 'JSTACK' | 'JCMD_JSON' | 'JCMD_TEXT'
+  snapshotIndex: number
+  snapshotTimestamp: string | null
+  snapshots: SnapshotRef[]
+  dataQuality: DataQualityIssue[]
+  virtualThreads: VirtualThreadReport | null
+  applicationName: string | null
+  businessPackages: string[]
+  suggestedBusinessPackages: string[]
+}
+
+// ── 锁等待关系图 ──
+export type LockGraphNodeType = 'THREAD' | 'LOCK' | 'GROUP'
+export type LockGraphEdgeType = 'WAITING_TO_LOCK' | 'PARKING' | 'WAITING_ON' | 'HELD_BY'
+
+export interface LockGraphNode {
+  id: string
+  type: LockGraphNodeType
+  label: string
+  threadKey: string | null
+  state: ThreadState | null
+  topMethod: string | null
+  lockAddress: string | null
+  lockClassName: string | null
+  count: number
+  members: { name: string; key: string }[]
+  root: boolean
+  deadlock: boolean
+  blockedBehind: number
+}
+
+export interface LockGraphEdge {
+  from: string
+  to: string
+  type: LockGraphEdgeType
+  deadlock: boolean
+}
+
+export interface LockGraphView {
+  nodes: LockGraphNode[]
+  edges: LockGraphEdge[]
+  totalWaiters: number
+  truncated: boolean
+  hiddenComponents: number
+}
+
+export interface CodeLayerConfig {
+  jdkPrefixes: string[]
+  frameworkPrefixes: string[]
+  defaultBusinessPackages: string[]
 }
 
 // ── 多 Dump 对比 ──
@@ -135,6 +251,7 @@ export interface SnapshotSummary {
 
 export interface StuckThread {
   threadName: string
+  threadKey: string
   state: ThreadState
   dumpsSeen: number
   topMethod: string
@@ -143,6 +260,7 @@ export interface StuckThread {
 
 export interface CpuDelta {
   threadName: string
+  threadKey: string
   cpuMsDelta: number
   firstCpuMs: number
   lastCpuMs: number
@@ -161,6 +279,8 @@ export interface DumpComparison {
   stuckThreads: StuckThread[]
   topCpuThreads: CpuDelta[]
   threadTrends: ThreadTrend[]
+  jvmRestartSuspected: boolean
+  matchedThreads: number
 }
 
 // ── 调用树 (火焰图) ──
@@ -193,6 +313,12 @@ export interface UploadResponse {
   parseTimeMs: number
   jvmVersion: string
   analyzedAt: string
+  snapshotCount: number
+}
+
+export interface UploadOptions {
+  businessPackages?: string[]
+  applicationName?: string | null
 }
 
 export interface ThreadListResponse {

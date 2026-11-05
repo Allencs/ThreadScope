@@ -2,6 +2,9 @@ package com.threadscope.controller;
 
 import com.threadscope.dto.TopCorrelationRequest;
 import com.threadscope.engine.analyzer.CallTreeBuilder;
+import com.threadscope.engine.analyzer.CodeLayerClassifier;
+import com.threadscope.engine.analyzer.LockGraphBuilder;
+import com.threadscope.engine.analyzer.LockGraphViewBuilder;
 import com.threadscope.engine.analyzer.TopHCorrelator;
 import com.threadscope.model.*;
 import com.threadscope.service.AnalysisStorageService;
@@ -27,6 +30,8 @@ public class AnalysisController {
     private final AnalysisStorageService storageService;
     private final CallTreeBuilder callTreeBuilder = new CallTreeBuilder();
     private final TopHCorrelator topHCorrelator = new TopHCorrelator();
+    private final LockGraphViewBuilder lockGraphViewBuilder = new LockGraphViewBuilder();
+    private final LockGraphBuilder lockGraphBuilder = new LockGraphBuilder();
 
     public AnalysisController(AnalysisStorageService storageService) {
         this.storageService = storageService;
@@ -57,8 +62,56 @@ public class AnalysisController {
         overview.put("threadPoolCount", result.threadPools() != null ? result.threadPools().size() : 0);
         overview.put("lockContentionCount", result.lockInfos() != null ? result.lockInfos().size() : 0);
         overview.put("dumpCount", result.dumpCount());
+        overview.put("dumpFormat", result.dumpFormat());
+        overview.put("snapshotIndex", result.snapshotIndex());
+        overview.put("snapshotTimestamp", result.snapshotTimestamp());
+        overview.put("snapshots", snapshotRefs(analysisId));
+        overview.put("dataQuality", result.dataQuality() != null ? result.dataQuality() : List.of());
+        overview.put("virtualThreads", result.virtualThreads());
+        overview.put("applicationName", result.applicationName());
+        overview.put("businessPackages", result.businessPackages() != null ? result.businessPackages() : List.of());
+        overview.put("suggestedBusinessPackages",
+            result.suggestedBusinessPackages() != null ? result.suggestedBusinessPackages() : List.of());
 
         return ResponseEntity.ok(overview);
+    }
+
+    /** 同一次上传中的全部快照，供前端切换 */
+    private List<Map<String, Object>> snapshotRefs(String analysisId) {
+        return storageService.findBundle(analysisId)
+            .map(bundle -> {
+                List<Map<String, Object>> refs = new ArrayList<>();
+                int count = bundle.snapshots().size();
+                for (int i = 0; i < count; i++) {
+                    AnalysisResult s = bundle.snapshots().get(i);
+                    Map<String, Object> ref = new LinkedHashMap<>();
+                    ref.put("index", i);
+                    ref.put("analysisId", AnalysisBundle.snapshotId(bundle.analysisId(), i, count));
+                    ref.put("timestamp", s.snapshotTimestamp());
+                    ref.put("totalThreads", s.totalThreads());
+                    ref.put("healthLevel", s.healthReport() != null ? s.healthReport().overallLevel() : null);
+                    ref.put("deadlockCount", s.deadlocks() != null ? s.deadlocks().totalDeadlocks() : 0);
+                    ref.put("latest", i == count - 1);
+                    refs.add(ref);
+                }
+                return refs;
+            })
+            .orElse(List.of());
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  锁等待关系图
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @GetMapping("/lock-graph")
+    public ResponseEntity<LockGraphView> getLockGraph(
+            @PathVariable String analysisId,
+            @RequestParam(defaultValue = "false") boolean includeConditionWaits) {
+        AnalysisResult result = storageService.getOrThrow(analysisId);
+        CodeLayerClassifier classifier = new CodeLayerClassifier(
+            result.businessPackages() != null ? result.businessPackages() : List.of());
+        return ResponseEntity.ok(lockGraphViewBuilder.build(
+            result.threads(), result.deadlocks(), includeConditionWaits, classifier));
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -111,6 +164,7 @@ public class AnalysisController {
             @RequestParam(required = false) String nid,
             @RequestParam(required = false) String lockAddress,
             @RequestParam(required = false) String poolName,
+            @RequestParam(required = false) String kind,
             @RequestParam(required = false, defaultValue = "default") String sort,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "50") int size) {
@@ -122,14 +176,24 @@ public class AnalysisController {
         AnalysisResult result = storageService.getOrThrow(analysisId);
         List<ThreadInfo> filtered = result.threads();
 
-        // 按线程池名过滤
+        // 按线程池过滤 (用线程标识而非线程名 — 重名线程不会串池)
         if (poolName != null && !poolName.isBlank()) {
-            Set<String> poolThreadNames = safeList(result.threadPools()).stream()
+            Set<String> poolThreadKeys = safeList(result.threadPools()).stream()
                 .filter(p -> p.poolName().equals(poolName))
-                .flatMap(p -> p.threadNames().stream())
+                .flatMap(p -> p.threadKeys().stream())
                 .collect(Collectors.toSet());
             filtered = filtered.stream()
-                .filter(t -> poolThreadNames.contains(t.name()))
+                .filter(t -> poolThreadKeys.contains(t.key()))
+                .toList();
+        }
+
+        // 按线程类别过滤 (PLATFORM / VIRTUAL / CARRIER，可逗号分隔)
+        if (kind != null && !kind.isBlank()) {
+            Set<ThreadKind> kinds = Arrays.stream(kind.split(","))
+                .map(s -> ThreadKind.valueOf(s.trim().toUpperCase()))
+                .collect(Collectors.toSet());
+            filtered = filtered.stream()
+                .filter(t -> kinds.contains(t.kind()))
                 .toList();
         }
 
@@ -205,6 +269,23 @@ public class AnalysisController {
     }
 
     /**
+     * 按线程标识 (key) 或线程名查询单个线程。优先精确匹配 key — 线程名可能重名。
+     * 用查询参数而不是路径变量：线程名可能含 "/" 等无法放进路径的字符。
+     */
+    @GetMapping("/thread")
+    public ResponseEntity<ThreadInfo> getThreadByRef(
+            @PathVariable String analysisId,
+            @RequestParam String ref) {
+        AnalysisResult result = storageService.getOrThrow(analysisId);
+        return result.threads().stream()
+            .filter(t -> t.key().equals(ref))
+            .findFirst()
+            .or(() -> result.threads().stream().filter(t -> t.name().equals(ref)).findFirst())
+            .map(ResponseEntity::ok)
+            .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
      * 批量查询线程信息 — 根据线程名列表返回对应的 ThreadInfo。
      * 用于 Locks 页面展开锁实例时批量预加载 waiting threads。
      */
@@ -267,6 +348,22 @@ public class AnalysisController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * 按地址查一把锁，包括没有等待者的持有锁。
+     * 竞争列表只含有等待者的锁；从线程栈点进来时仍要能看到持有者。
+     */
+    @GetMapping("/locks/by-address")
+    public ResponseEntity<LockInfo> getLockByAddress(
+            @PathVariable String analysisId,
+            @RequestParam String address) {
+        AnalysisResult result = storageService.getOrThrow(analysisId);
+        LockInfo info = lockGraphBuilder.lookup(result.threads(), address);
+        if (info == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(info);
+    }
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  线程池分析
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -327,11 +424,12 @@ public class AnalysisController {
     }
 
     private boolean matchesSearch(ThreadInfo thread, String query) {
-        // 搜索线程名
+        // 搜索线程名 / 线程标识
         if (thread.name().toLowerCase().contains(query)) return true;
+        if (thread.key().toLowerCase().equals(query)) return true;
         // 搜索 tid/nid
-        if (thread.tid().toLowerCase().contains(query)) return true;
-        if (thread.nid().toLowerCase().contains(query)) return true;
+        if (thread.tid() != null && thread.tid().toLowerCase().contains(query)) return true;
+        if (thread.nid() != null && thread.nid().toLowerCase().contains(query)) return true;
         // 搜索堆栈中的类名、方法名、以及 "类名.方法名" 组合
         return thread.stackTrace().stream()
             .anyMatch(f -> {

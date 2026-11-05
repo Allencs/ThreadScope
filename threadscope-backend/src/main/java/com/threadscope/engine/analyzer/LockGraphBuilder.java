@@ -12,90 +12,110 @@ import java.util.*;
  */
 public class LockGraphBuilder {
 
+    private record ThreadRef(String name, String key) {}
+
     /**
-     * 构建所有锁的持有/等待关系。
+     * 构建有争用的锁（至少有一个等待者）。无等待者的持有锁不进入竞争列表。
      */
     public List<LockInfo> buildLockGraph(List<ThreadInfo> threads) {
-        // 1. 收集所有锁地址
+        return buildAll(threads).stream()
+            .filter(lock -> lock.contentionLevel() > 0)
+            .toList();
+    }
+
+    /**
+     * 按地址查找一把锁，包括没有等待者的持有锁。
+     * jcmd 的 monitorsOwned 只有持有者、没有 waiter，点开详情时仍需要能定位到持有线程。
+     */
+    public LockInfo lookup(List<ThreadInfo> threads, String address) {
+        if (address == null || address.isBlank()) return null;
+        String needle = address.trim();
+        return buildAll(threads).stream()
+            .filter(lock -> lock.lockAddress().equals(needle))
+            .findFirst()
+            .orElse(null);
+    }
+
+    private List<LockInfo> buildAll(List<ThreadInfo> threads) {
         Map<String, String> lockClassNames = new HashMap<>();
-        Map<String, String> lockHolders = new HashMap<>();              // lockAddr → holderThread
-        Map<String, List<String>> lockWaiters = new HashMap<>();        // lockAddr → all waiting threads
-        Map<String, List<String>> blockedWaiters = new HashMap<>();     // lockAddr → only BLOCKED (WaitingToLock) threads
-        Map<String, Set<String>> waitingOnPerLock = new HashMap<>();    // lockAddr → threads doing Object.wait()
+        Map<String, ThreadRef> lockHolders = new HashMap<>();
+        Map<String, List<ThreadRef>> lockWaiters = new HashMap<>();
+        Map<String, List<ThreadRef>> blockedWaiters = new HashMap<>();
+        Map<String, Set<String>> waitingOnPerLock = new HashMap<>();
 
         for (ThreadInfo thread : threads) {
+            ThreadRef ref = new ThreadRef(thread.name(), thread.key());
             for (LockAction action : thread.lockActions()) {
                 lockClassNames.putIfAbsent(action.lockAddress(), action.lockClassName());
 
                 switch (action) {
                     case LockAction.Held held ->
-                        lockHolders.put(held.lockAddress(), thread.name());
+                        lockHolders.putIfAbsent(held.lockAddress(), ref);
 
                     case LockAction.WaitingToLock waiting -> {
-                        lockWaiters.computeIfAbsent(waiting.lockAddress(), k -> new ArrayList<>())
-                                   .add(thread.name());
-                        // WaitingToLock = synchronized 竞争 → 线程状态为 BLOCKED
-                        blockedWaiters.computeIfAbsent(waiting.lockAddress(), k -> new ArrayList<>())
-                                      .add(thread.name());
+                        lockWaiters.computeIfAbsent(waiting.lockAddress(), k -> new ArrayList<>()).add(ref);
+                        blockedWaiters.computeIfAbsent(waiting.lockAddress(), k -> new ArrayList<>()).add(ref);
                     }
 
                     case LockAction.ParkingToWaitFor parking ->
-                        lockWaiters.computeIfAbsent(parking.lockAddress(), k -> new ArrayList<>())
-                                   .add(thread.name());
+                        lockWaiters.computeIfAbsent(parking.lockAddress(), k -> new ArrayList<>()).add(ref);
 
                     case LockAction.WaitingOn waitingOn -> {
-                        lockWaiters.computeIfAbsent(waitingOn.lockAddress(), k -> new ArrayList<>())
-                                   .add(thread.name());
-                        waitingOnPerLock.computeIfAbsent(waitingOn.lockAddress(), k -> new HashSet<>())
-                                        .add(thread.name());
+                        lockWaiters.computeIfAbsent(waitingOn.lockAddress(), k -> new ArrayList<>()).add(ref);
+                        waitingOnPerLock.computeIfAbsent(waitingOn.lockAddress(), k -> new HashSet<>()).add(thread.key());
                     }
                 }
             }
 
-            // 也处理 ownable synchronizers
             for (String sync : thread.ownableSynchronizers()) {
-                // 格式: "0x000000076ab220f8 (a java.util.concurrent.locks.ReentrantLock$NonfairSync)"
                 int spaceIdx = sync.indexOf(' ');
                 if (spaceIdx > 0) {
                     String addr = sync.substring(0, spaceIdx);
-                    lockHolders.putIfAbsent(addr, thread.name());
+                    lockHolders.putIfAbsent(addr, ref);
+                    lockClassNames.putIfAbsent(addr, syncClassName(sync.substring(spaceIdx + 1)));
                 }
             }
         }
 
-        // 1.5 修正 Object.wait() 模式:
-        // 当 holder 同时对同一把锁调用了 Object.wait()，说明 monitor 已被释放，应清除 holder 身份。
-        // 同时将该线程从 waiters 列表中移除（它只是在等待 notify，不是锁竞争）。
+        // Object.wait() 会释放 monitor：持有者同时在 wait 同一把锁时，不再算持有者。
         for (var it = lockHolders.entrySet().iterator(); it.hasNext(); ) {
             var entry = it.next();
             String addr = entry.getKey();
-            String holder = entry.getValue();
-            Set<String> waitOnSet = waitingOnPerLock.getOrDefault(addr, Set.of());
-            if (waitOnSet.contains(holder)) {
+            ThreadRef holder = entry.getValue();
+            if (waitingOnPerLock.getOrDefault(addr, Set.of()).contains(holder.key())) {
                 it.remove();
-                // 从 waiters 中也移除自等待的 holder（非竞争场景）
-                List<String> waiters = lockWaiters.get(addr);
-                if (waiters != null) {
-                    waiters.remove(holder);
-                }
+                List<ThreadRef> waiters = lockWaiters.get(addr);
+                if (waiters != null) waiters.removeIf(w -> w.key().equals(holder.key()));
             }
         }
 
-        // 2. 构建 LockInfo 列表 (仅返回有争用的锁)
         Set<String> allLockAddrs = new HashSet<>();
         allLockAddrs.addAll(lockHolders.keySet());
         allLockAddrs.addAll(lockWaiters.keySet());
 
         return allLockAddrs.stream()
-            .filter(addr -> lockWaiters.containsKey(addr) && !lockWaiters.get(addr).isEmpty())
-            .map(addr -> new LockInfo(
-                addr,
-                lockClassNames.getOrDefault(addr, "unknown"),
-                lockHolders.get(addr),
-                lockWaiters.getOrDefault(addr, List.of()),
-                blockedWaiters.getOrDefault(addr, List.of())
-            ))
+            .map(addr -> {
+                ThreadRef holder = lockHolders.get(addr);
+                List<ThreadRef> waiters = lockWaiters.getOrDefault(addr, List.of());
+                List<ThreadRef> blocked = blockedWaiters.getOrDefault(addr, List.of());
+                return new LockInfo(
+                    addr,
+                    lockClassNames.getOrDefault(addr, "unknown"),
+                    holder != null ? holder.name() : null,
+                    waiters.stream().map(ThreadRef::name).toList(),
+                    blocked.stream().map(ThreadRef::name).toList(),
+                    holder != null ? holder.key() : null
+                );
+            })
             .sorted(Comparator.comparingInt(LockInfo::contentionLevel).reversed())
             .toList();
+    }
+
+    /** "(a java.util.concurrent.locks.ReentrantLock$NonfairSync)" → 类名 */
+    private static String syncClassName(String raw) {
+        String s = raw.trim();
+        if (s.startsWith("(a ")) s = s.substring(3);
+        if (s.endsWith(")")) s = s.substring(0, s.length() - 1);
+        return s.isBlank() ? "unknown" : s;
     }
 }

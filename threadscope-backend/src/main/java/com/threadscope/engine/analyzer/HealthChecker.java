@@ -1,5 +1,6 @@
 package com.threadscope.engine.analyzer;
 
+import com.threadscope.config.HealthThresholds;
 import com.threadscope.model.*;
 import com.threadscope.model.HealthReport.HealthLevel;
 import com.threadscope.model.HealthReport.RiskItem;
@@ -13,26 +14,29 @@ import java.util.stream.Collectors;
  * 检测规则来源:
  * - 多年JVM调优实战经验
  * - 常见生产故障模式
- * - 性能基线阈值
+ * - 性能基线阈值 (可通过 threadscope.analysis.health.* 配置)
  */
 public class HealthChecker {
 
-    // ── 阈值常量 ──
-    private static final double BLOCKED_RATIO_WARNING = 0.05;   // BLOCKED > 5% 告警
-    private static final double BLOCKED_RATIO_CRITICAL = 0.15;  // BLOCKED > 15% 严重
-    private static final int BLOCK_STORM_THRESHOLD = 5;          // 同一锁阻塞 ≥ 5 个线程
-    private static final double POOL_EXHAUSTION_THRESHOLD = 0.90; // 线程池利用率 > 90%
-    private static final int THREAD_COUNT_WARNING = 1000;        // 线程总数告警线
-    private static final int THREAD_COUNT_CRITICAL = 3000;       // 线程总数严重线
-    private static final int NON_DAEMON_WARNING = 200;           // 非 daemon 线程告警线
-    private static final int DEEP_STACK_FRAMES = 500;            // 栈深度告警线 (递归嫌疑)
-    private static final int IO_BOTTLENECK_THRESHOLD = 10;       // 同一 IO 点等待线程数
-    private static final int ROOT_BLOCKER_MIN = 5;               // 根阻塞报告的最小拖累数
-    private static final double CHURN_ELAPSED_SECONDS = 60;      // "新生线程"的存活阈值
-    private static final int CHURN_MIN_COUNT = 50;               // 线程频繁创建的最小数量
-
+    private final HealthThresholds th;
     private final KnownIssueDetector knownIssueDetector = new KnownIssueDetector();
     private final BlockChainAnalyzer blockChainAnalyzer = new BlockChainAnalyzer();
+
+    public HealthChecker() {
+        this(HealthThresholds.defaults());
+    }
+
+    public HealthChecker(HealthThresholds thresholds) {
+        this.th = thresholds != null ? thresholds : HealthThresholds.defaults();
+    }
+
+    public HealthReport check(
+            List<ThreadInfo> threads,
+            DeadlockInfo deadlocks,
+            List<LockInfo> lockInfos,
+            List<ThreadPoolInfo> threadPools) {
+        return check(threads, deadlocks, lockInfos, threadPools, null, CodeLayerClassifier.inferring());
+    }
 
     /**
      * 执行全面健康检查。
@@ -41,8 +45,11 @@ public class HealthChecker {
             List<ThreadInfo> threads,
             DeadlockInfo deadlocks,
             List<LockInfo> lockInfos,
-            List<ThreadPoolInfo> threadPools) {
+            List<ThreadPoolInfo> threadPools,
+            VirtualThreadReport virtualThreads,
+            CodeLayerClassifier codeLayers) {
 
+        CodeLayerClassifier classifier = codeLayers != null ? codeLayers : CodeLayerClassifier.inferring();
         List<RiskItem> risks = new ArrayList<>();
 
         // ── 检测1: 死锁 ──
@@ -60,24 +67,28 @@ public class HealthChecker {
         // ── 检测5: 线程池耗尽 ──
         checkPoolExhaustion(threadPools, risks);
 
-        // ── 检测6: 疑似CPU死循环 ──
-        checkCpuLoopSuspect(threads, risks);
+        // ── 检测6: 疑似CPU死循环 / 计算热点 ──
+        checkCpuHotspot(threads, classifier, risks);
 
         // ── 检测7: IO 瓶颈 (大量 RUNNABLE 线程实际在等 IO) ──
-        checkIoBottleneck(threads, risks);
+        checkIoBottleneck(threads, classifier, risks);
 
         // ── 检测8: 已知病症指纹库 ──
         risks.addAll(knownIssueDetector.detect(threads));
 
-        // ── 检测9: 线程总量与构成 ──
+        // ── 检测9: 虚拟线程 pinning ──
+        checkVirtualThreads(virtualThreads, risks);
+
+        // ── 检测10: 线程总量与构成 ──
         checkThreadCount(threads, risks);
         checkNonDaemonThreads(threads, risks);
         checkThreadChurn(threads, risks);
+        checkAnonymousPools(threadPools, risks);
 
-        // ── 检测10: Finalizer 阻塞 (OOM 前兆) ──
+        // ── 检测11: Finalizer 阻塞 (OOM 前兆) ──
         checkFinalizerBlocked(threads, risks);
 
-        // ── 检测11: 异常深栈 (递归风险) ──
+        // ── 检测12: 异常深栈 (递归风险) ──
         checkDeepStacks(threads, risks);
 
         // ── 计算总体健康等级 ──
@@ -113,7 +124,7 @@ public class HealthChecker {
             // 仅统计真正因 synchronized 竞争而 BLOCKED 的线程 (waitingToLock)，
             // 排除 parkingToWaitFor / waitingOn 产生的等待者，因为它们是正常的异步等待行为。
             long blockedWaiters = lock.blockedWaiterCount();
-            if (blockedWaiters >= BLOCK_STORM_THRESHOLD) {
+            if (blockedWaiters >= th.blockStormThreshold()) {
                 risks.add(new RiskItem(
                     "BLOCK_STORM",
                     HealthLevel.WARNING,
@@ -138,7 +149,7 @@ public class HealthChecker {
 
         double ratio = (double) blockedCount / threads.size();
 
-        if (ratio >= BLOCKED_RATIO_CRITICAL) {
+        if (ratio >= th.blockedRatioCritical()) {
             risks.add(new RiskItem(
                 "HIGH_BLOCKED_RATIO",
                 HealthLevel.CRITICAL,
@@ -146,7 +157,7 @@ public class HealthChecker {
                 "系统中高达 " + String.format("%.1f%%", ratio * 100) + " 的线程被阻塞。大量线程处于 BLOCKED 状态将导致系统吞吐量严重下降，请优先排查可能存在的大范围热点锁竞争、底层 I/O 阻塞或连接池耗尽等瓶颈。",
                 blockedThreads.stream().map(ThreadInfo::name).limit(10).toList()
             ));
-        } else if (ratio >= BLOCKED_RATIO_WARNING) {
+        } else if (ratio >= th.blockedRatioWarning()) {
             risks.add(new RiskItem(
                 "HIGH_BLOCKED_RATIO",
                 HealthLevel.WARNING,
@@ -172,25 +183,28 @@ public class HealthChecker {
         }
     }
 
+    /**
+     * 线程池耗尽 — 忙碌按栈判定：卡在 getConnection / Future.get 等资源等待上的 WAITING 线程同样计为忙碌。
+     */
     private void checkPoolExhaustion(List<ThreadPoolInfo> pools, List<RiskItem> risks) {
         if (pools == null) return;
 
         for (ThreadPoolInfo pool : pools) {
-            // 跳过 JVM 内部池和 GC 线程
-            if ("JVM-Internal".equals(pool.poolType()) || "GC".equals(pool.poolType()) ||
-                "G1-GC".equals(pool.poolType()) || "JIT-Compiler".equals(pool.poolType())) {
-                continue;
-            }
+            if (ThreadPoolDetector.NON_EXHAUSTIBLE_CATEGORIES.contains(pool.category())) continue;
 
             double utilization = pool.utilizationRate();
-            if (pool.totalThreads() >= 5 && utilization >= POOL_EXHAUSTION_THRESHOLD * 100) {
+            if (pool.totalThreads() >= th.poolMinThreads() && utilization >= th.poolExhaustionRatio() * 100) {
+                int waitingBusy = Math.max(0, pool.busyCount() - pool.activeCount() - pool.blockedCount());
+                String waitHint = waitingBusy > 0
+                    ? "其中 " + waitingBusy + " 个线程虽显示 WAITING，但并非在等新任务，而是在任务中等待资源 (连接池、下游响应、Future 等)，同样占着池容量。"
+                    : "";
                 risks.add(new RiskItem(
                     "POOL_EXHAUSTION",
-                    HealthLevel.WARNING,
+                    utilization >= 99.9 && pool.totalThreads() >= th.poolMinThreads() * 2 ? HealthLevel.CRITICAL : HealthLevel.WARNING,
                     "线程池 " + pool.poolName() + " 接近耗尽",
-                    String.format("线程池 '%s' (%s) 共 %d 个线程，其中 %d 个非空闲(%.0f%%，RUNNABLE %d 个 / BLOCKED %d 个)。池接近饱和可能导致请求排队。",
+                    String.format("线程池 '%s' (%s) 共 %d 个线程，其中 %d 个忙碌 (%.0f%%)、仅 %d 个空闲。%s池接近饱和会导致新请求排队或被拒绝。",
                         pool.poolName(), pool.poolType(), pool.totalThreads(),
-                        pool.busyCount(), utilization, pool.activeCount(), pool.blockedCount()),
+                        pool.busyCount(), utilization, pool.idleCount(), waitHint),
                     pool.threadNames().stream().limit(5).toList()
                 ));
             }
@@ -201,18 +215,18 @@ public class HealthChecker {
      * 锁等待链根因定位 — 把 N 条锁记录收敛到"1 个元凶线程"。
      */
     private void checkRootBlockers(List<ThreadInfo> threads, List<RiskItem> risks) {
-        Map<String, ThreadInfo> byName = threads.stream()
-            .collect(Collectors.toMap(ThreadInfo::name, t -> t, (a, b) -> a));
+        Map<String, ThreadInfo> byKey = threads.stream()
+            .collect(Collectors.toMap(ThreadInfo::key, t -> t, (a, b) -> a));
 
         for (var root : blockChainAnalyzer.findRootBlockers(threads)) {
-            if (root.totalBlocked() < ROOT_BLOCKER_MIN) continue;
+            if (root.totalBlocked() < th.rootBlockerMin()) continue;
 
-            ThreadInfo rootThread = byName.get(root.rootThreadName());
+            ThreadInfo rootThread = byKey.get(root.rootThreadKey());
             String rootActivity = rootThread != null
                 ? "该线程当前状态 " + rootThread.state() + "，栈顶: " + rootThread.topMethod()
                 : "该线程信息缺失";
 
-            HealthLevel level = root.totalBlocked() >= 20 ? HealthLevel.CRITICAL : HealthLevel.WARNING;
+            HealthLevel level = root.totalBlocked() >= th.rootBlockerCritical() ? HealthLevel.CRITICAL : HealthLevel.WARNING;
             List<String> affected = new ArrayList<>();
             affected.add(root.rootThreadName());
             affected.addAll(root.blockedSamples());
@@ -232,13 +246,13 @@ public class HealthChecker {
     /**
      * IO 瓶颈 — RUNNABLE 但实际阻塞在网络/磁盘 IO 上的线程扎堆。
      */
-    private void checkIoBottleneck(List<ThreadInfo> threads, List<RiskItem> risks) {
+    private void checkIoBottleneck(List<ThreadInfo> threads, CodeLayerClassifier classifier, List<RiskItem> risks) {
         Map<String, List<ThreadInfo>> byBusinessFrame = threads.stream()
             .filter(FrameClassifier::isIoBoundRunnable)
-            .collect(Collectors.groupingBy(this::firstBusinessMethod));
+            .collect(Collectors.groupingBy(t -> firstBusinessMethod(t, classifier)));
 
         byBusinessFrame.forEach((method, group) -> {
-            if (group.size() >= IO_BOTTLENECK_THRESHOLD) {
+            if (group.size() >= th.ioBottleneckThreshold()) {
                 risks.add(new RiskItem(
                     "IO_BOTTLENECK",
                     HealthLevel.WARNING,
@@ -251,8 +265,10 @@ public class HealthChecker {
         });
     }
 
-    /** 从栈中找第一个非 JDK 帧作为"业务调用点"，用于聚合 IO 等待线程 */
-    private String firstBusinessMethod(ThreadInfo thread) {
+    /** 业务调用点：优先第一个业务帧，其次第一个非 JDK 帧，最后栈顶 */
+    private static String firstBusinessMethod(ThreadInfo thread, CodeLayerClassifier classifier) {
+        StackFrame business = classifier.firstBusinessFrame(thread);
+        if (business != null) return business.fullMethod();
         return thread.stackTrace().stream()
             .filter(f -> !f.isJdkFrame())
             .findFirst()
@@ -260,21 +276,43 @@ public class HealthChecker {
             .orElse(thread.topMethod());
     }
 
+    private void checkVirtualThreads(VirtualThreadReport report, List<RiskItem> risks) {
+        if (report == null || report.pinnedCount() == 0) return;
+
+        boolean allCarriersPinned = report.carrierCount() > 0 && report.pinnedCount() >= report.carrierCount();
+        String versionAdvice = report.jvmMajorVersion() >= 24
+            ? "当前 JDK " + report.jvmMajorVersion() + " 已消除 synchronized 导致的 pinning (JEP 491)，剩余 pinning 来自 native 帧或类初始化，建议避免在虚拟线程中调用阻塞的 native 方法。"
+            : "建议：① 将阻塞调用外围的 synchronized 替换为 ReentrantLock；② 升级到 JDK 24+ (JEP 491 消除了 synchronized 导致的 pinning)；"
+              + "③ 用 -Djdk.tracePinnedThreads=full 或 JFR 事件 jdk.VirtualThreadPinned 定位具体位置。";
+
+        risks.add(new RiskItem(
+            "VIRTUAL_THREAD_PINNED",
+            allCarriersPinned ? HealthLevel.CRITICAL : HealthLevel.WARNING,
+            report.pinnedCount() + " 个虚拟线程钉住了载体线程 (pinning)",
+            "被钉住的虚拟线程在阻塞期间无法让出载体线程。载体线程池默认只有 CPU 核数个线程"
+                + (report.carrierCount() > 0 ? " (本 dump 中可见 " + report.carrierCount() + " 个)" : "")
+                + "，" + (allCarriersPinned ? "目前载体已全部被占用，其余虚拟线程将无法得到调度，表现为整体吞吐骤降或卡死。" : "pinning 增多时会导致其余虚拟线程得不到调度。")
+                + versionAdvice,
+            report.pinned().stream().map(VirtualThreadReport.PinnedThread::threadName).limit(10).toList()
+        ));
+    }
+
     private void checkThreadCount(List<ThreadInfo> threads, List<RiskItem> risks) {
-        int total = threads.size();
-        if (total >= THREAD_COUNT_CRITICAL) {
+        // 虚拟线程本身很廉价，不计入线程总量风险
+        long total = threads.stream().filter(t -> !t.isVirtual()).count();
+        if (total >= th.threadCountCritical()) {
             risks.add(new RiskItem(
                 "THREAD_COUNT", HealthLevel.CRITICAL,
-                "线程总数高达 " + total,
-                "线程数超过 " + THREAD_COUNT_CRITICAL + "，极可能存在线程泄漏（每请求建线程、线程池无上限等）。" +
+                "平台线程总数高达 " + total,
+                "线程数超过 " + th.threadCountCritical() + "，极可能存在线程泄漏（每请求建线程、线程池无上限等）。" +
                 "过多线程本身会消耗大量栈内存 (约 1MB/线程) 并加剧上下文切换。建议按线程名前缀定位增长最快的来源。",
                 List.of()
             ));
-        } else if (total >= THREAD_COUNT_WARNING) {
+        } else if (total >= th.threadCountWarning()) {
             risks.add(new RiskItem(
                 "THREAD_COUNT", HealthLevel.WARNING,
-                "线程总数偏高 (" + total + ")",
-                "线程数超过 " + THREAD_COUNT_WARNING + "。如果业务规模不需要这么多并发，" +
+                "平台线程总数偏高 (" + total + ")",
+                "线程数超过 " + th.threadCountWarning() + "。如果业务规模不需要这么多并发，" +
                 "请检查是否存在未复用的线程创建或过大的线程池配置。",
                 List.of()
             ));
@@ -283,11 +321,11 @@ public class HealthChecker {
 
     private void checkNonDaemonThreads(List<ThreadInfo> threads, List<RiskItem> risks) {
         List<ThreadInfo> nonDaemon = threads.stream()
-            .filter(t -> !t.daemon())
+            .filter(t -> !t.daemon() && !t.isVirtual())
             .filter(t -> !"main".equals(t.name()) && !"DestroyJavaVM".equals(t.name()))
             .toList();
 
-        if (nonDaemon.size() >= NON_DAEMON_WARNING) {
+        if (nonDaemon.size() >= th.nonDaemonWarning()) {
             risks.add(new RiskItem(
                 "NON_DAEMON_THREADS", HealthLevel.WARNING,
                 nonDaemon.size() + " 个非 daemon 用户线程",
@@ -302,24 +340,45 @@ public class HealthChecker {
      * 线程频繁创建 (churn) — 大量存活时间很短的线程说明没有复用线程池。
      */
     private void checkThreadChurn(List<ThreadInfo> threads, List<RiskItem> risks) {
-        List<ThreadInfo> youngThreads = threads.stream()
+        List<ThreadInfo> platform = threads.stream().filter(t -> !t.isVirtual()).toList();
+        List<ThreadInfo> youngThreads = platform.stream()
             .filter(t -> {
                 double sec = parseElapsedSeconds(t.elapsed());
-                return sec >= 0 && sec < CHURN_ELAPSED_SECONDS;
+                return sec >= 0 && sec < th.churnElapsedSeconds();
             })
             .toList();
 
-        if (youngThreads.size() >= CHURN_MIN_COUNT &&
-            youngThreads.size() >= threads.size() * 0.3) {
+        if (youngThreads.size() >= th.churnMinCount() &&
+            youngThreads.size() >= platform.size() * 0.3) {
             risks.add(new RiskItem(
                 "THREAD_CHURN", HealthLevel.WARNING,
-                youngThreads.size() + " 个线程存活不足 " + (int) CHURN_ELAPSED_SECONDS + " 秒",
-                "快照中 " + String.format("%.0f%%", 100.0 * youngThreads.size() / threads.size()) +
-                " 的线程都是最近 1 分钟内创建的，说明可能在频繁地创建/销毁线程而非复用线程池。" +
+                youngThreads.size() + " 个线程存活不足 " + (int) th.churnElapsedSeconds() + " 秒",
+                "快照中 " + String.format("%.0f%%", 100.0 * youngThreads.size() / platform.size()) +
+                " 的线程都是最近创建的，说明可能在频繁地创建/销毁线程而非复用线程池。" +
                 "频繁建线程的开销 (栈分配 + 内核调度) 在高并发下非常可观。",
                 youngThreads.stream().map(ThreadInfo::name).limit(10).toList()
             ));
         }
+    }
+
+    /** 未命名线程池 — 治理类建议 */
+    private void checkAnonymousPools(List<ThreadPoolInfo> pools, List<RiskItem> risks) {
+        if (pools == null) return;
+        List<ThreadPoolInfo> anonymous = pools.stream()
+            .filter(p -> ThreadPoolDetector.CATEGORY_ANONYMOUS.equals(p.category()))
+            .toList();
+        if (anonymous.isEmpty()) return;
+
+        int threadCount = anonymous.stream().mapToInt(ThreadPoolInfo::totalThreads).sum();
+        String names = anonymous.stream().limit(5).map(ThreadPoolInfo::poolName).collect(Collectors.joining("、"));
+        risks.add(new RiskItem(
+            "ANONYMOUS_THREAD_POOL", HealthLevel.INFO,
+            anonymous.size() + " 个未命名线程池 / 线程组 (共 " + threadCount + " 个线程)",
+            "检测到使用默认命名的线程池或线程：" + names + (anonymous.size() > 5 ? " 等" : "") + "。" +
+            "默认名称 (pool-N-thread-M、Thread-N) 无法反映业务归属，故障时难以判断是谁创建、属于哪个业务。" +
+            "请规范线程池命名：通过 ThreadFactoryBuilder / CustomizableThreadFactory / setThreadNamePrefix 设置业务前缀。",
+            anonymous.stream().flatMap(p -> p.threadNames().stream()).limit(10).toList()
+        ));
     }
 
     /**
@@ -344,7 +403,7 @@ public class HealthChecker {
 
     private void checkDeepStacks(List<ThreadInfo> threads, List<RiskItem> risks) {
         List<ThreadInfo> deep = threads.stream()
-            .filter(t -> t.stackTrace().size() >= DEEP_STACK_FRAMES)
+            .filter(t -> t.stackTrace().size() >= th.deepStackFrames())
             .sorted(Comparator.comparingInt((ThreadInfo t) -> t.stackTrace().size()).reversed())
             .toList();
 
@@ -352,7 +411,7 @@ public class HealthChecker {
             ThreadInfo worst = deep.getFirst();
             risks.add(new RiskItem(
                 "DEEP_STACK", HealthLevel.WARNING,
-                deep.size() + " 个线程栈深超过 " + DEEP_STACK_FRAMES + " 帧",
+                deep.size() + " 个线程栈深超过 " + th.deepStackFrames() + " 帧",
                 "最深的线程 \"" + worst.name() + "\" 有 " + worst.stackTrace().size() +
                 " 帧，极可能存在无终止条件的递归调用，继续加深会抛出 StackOverflowError。" +
                 "检查栈中是否有重复出现的方法序列。",
@@ -376,32 +435,36 @@ public class HealthChecker {
         }
     }
 
-    private void checkCpuLoopSuspect(List<ThreadInfo> threads, List<RiskItem> risks) {
-        // RUNNABLE 且栈顶是用户代码 (非JDK/非IO) 的线程，可能在做CPU密集计算或死循环
-        List<ThreadInfo> suspects = threads.stream()
-            .filter(t -> t.state() == ThreadState.RUNNABLE)
-            .filter(t -> !t.stackTrace().isEmpty())
-            .filter(t -> {
-                StackFrame top = t.stackTrace().getFirst();
-                return !top.isJdkFrame() && !top.isNative();
-            })
-            .toList();
+    /**
+     * CPU 热点 — 同一位置扎堆的 RUNNABLE 线程。
+     *
+     * 栈顶在 JDK 内部 (正则匹配、HashMap 操作、异常栈填充、压缩) 同样可能是 CPU 问题，不能因为
+     * "不是用户代码"就跳过；只排除 IO 等待与 Selector/accept 等空闲轮询。
+     * 栈顶是 JDK 帧时附上业务调用点，避免把不同来源的 HashMap.get 混成一组。
+     */
+    private void checkCpuHotspot(List<ThreadInfo> threads, CodeLayerClassifier classifier, List<RiskItem> risks) {
+        Map<String, List<ThreadInfo>> byLocation = threads.stream()
+            .filter(FrameClassifier::isCpuCandidate)
+            .collect(Collectors.groupingBy(t -> cpuLocation(t, classifier), LinkedHashMap::new, Collectors.toList()));
 
-        // 如果大量 RUNNABLE 线程在同一个用户方法上，可能有CPU热点
-        Map<String, List<ThreadInfo>> byTopMethod = suspects.stream()
-            .collect(Collectors.groupingBy(ThreadInfo::topMethod));
-
-        byTopMethod.forEach((method, group) -> {
-            if (group.size() >= 3) {
+        byLocation.forEach((location, group) -> {
+            if (group.size() >= th.cpuHotspotMinThreads()) {
                 risks.add(new RiskItem(
                     "CPU_HOTSPOT",
                     HealthLevel.WARNING,
-                    group.size() + " 个 RUNNABLE 线程在同一方法",
-                    "方法 " + method + " 有 " + group.size() + " 个线程在执行，可能是CPU热点。" +
-                    "结合 top -H 输出确认是否占用过高CPU。",
+                    group.size() + " 个 RUNNABLE 线程停在同一位置",
+                    "位置 " + location + " 上有 " + group.size() + " 个线程在执行，可能是 CPU 热点或死循环。" +
+                    "结合 top -H 输出或多份 dump 的 CPU 差值确认是否占用过高 CPU。",
                     group.stream().map(ThreadInfo::name).limit(5).toList()
                 ));
             }
         });
+    }
+
+    private static String cpuLocation(ThreadInfo t, CodeLayerClassifier classifier) {
+        StackFrame top = t.stackTrace().getFirst();
+        if (!top.isJdkFrame()) return top.fullMethod();
+        String caller = firstBusinessMethod(t, classifier);
+        return caller.equals(top.fullMethod()) ? top.fullMethod() : top.fullMethod() + " ← " + caller;
     }
 }

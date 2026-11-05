@@ -72,6 +72,23 @@ public final class DumpPatterns {
         "^\"([^\"]+)\"[^\"]*?\\bnid=(0x[0-9a-fA-F]+|\\d+)\\s+(\\S+)"
     );
 
+    /** 简化线程头中的独立字段 — 无法整行匹配时逐个提取 (JVM 内部线程常缺少 #N) */
+    public static final Pattern HEADER_TID = Pattern.compile("\\btid=(0x[0-9a-fA-F]+)");
+    public static final Pattern HEADER_CPU = Pattern.compile("\\bcpu=(\\S+)");
+    public static final Pattern HEADER_ELAPSED = Pattern.compile("\\belapsed=(\\S+)");
+    public static final Pattern HEADER_PRIO = Pattern.compile("\\bprio=(\\d+)");
+    public static final Pattern HEADER_OS_PRIO = Pattern.compile("\\bos_prio=(\\d+)");
+    public static final Pattern HEADER_NUMBER = Pattern.compile("^\"[^\"]*\"\\s+#(\\d+)");
+    public static final Pattern HEADER_DAEMON = Pattern.compile("^\"[^\"]*\"[^\"]*?\\sdaemon\\s");
+
+    /**
+     * 载体线程上的虚拟线程标记 (JDK 21+ jstack):
+     * "   Carrying virtual thread #23"
+     */
+    public static final Pattern CARRYING_VIRTUAL_THREAD = Pattern.compile(
+        "^\\s*-?\\s*Carrying virtual thread #(\\d+)"
+    );
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  线程状态行
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

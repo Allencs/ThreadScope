@@ -6,6 +6,7 @@
 import { ref, onMounted } from 'vue'
 import { useAnalysisStore } from '@/stores/analysisStore'
 import { STATE_COLORS, type ThreadState } from '@/types'
+import StackTraceView from '@/components/common/StackTraceView.vue'
 
 const store = useAnalysisStore()
 const expandedGroups = ref<Set<string>>(new Set())
@@ -60,10 +61,7 @@ function groupTitle(group: (typeof store.stackAggregations)[number]): string {
         <div v-if="expandedGroups.has(group.fingerprint)" class="agg-detail thread-expand-enter">
           <!-- Representative Stack -->
           <div class="stack-trace">
-            <div v-for="(frame, idx) in group.representativeStack" :key="idx" class="stack-frame mono"
-              :class="{ 'stack-frame--jdk': frame.className.startsWith('java.') || frame.className.startsWith('sun.') }">
-              at <span class="frame-class">{{ frame.className }}</span>.<span class="frame-method">{{ frame.methodName }}</span>(<span class="frame-source">{{ frame.source }}</span>)
-            </div>
+            <StackTraceView :frames="group.representativeStack" />
           </div>
 
           <!-- Thread Names -->
@@ -108,12 +106,15 @@ function groupTitle(group: (typeof store.stackAggregations)[number]): string {
 
 .agg-detail { padding: 0 var(--ts-space-md) var(--ts-space-md); border-top: var(--ts-border); }
 
-.stack-trace { padding: var(--ts-space-sm) 0; }
-.stack-frame { font-size: 12px; padding: 2px 0; color: var(--ts-text-primary); }
-.stack-frame--jdk { color: var(--ts-text-muted); }
-.frame-class { color: var(--ts-text-secondary); }
-.frame-method { color: var(--ts-accent); font-weight: 500; }
-.frame-source { color: var(--ts-success); }
+.stack-trace {
+  margin-top: var(--ts-space-sm);
+  border: var(--ts-border);
+  border-radius: var(--ts-radius-md);
+  overflow: hidden;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+}
 
 .thread-names { margin-top: var(--ts-space-sm); padding-top: var(--ts-space-sm); border-top: var(--ts-border); }
 .names-label { font-size: var(--ts-font-size-xs); color: var(--ts-text-muted); display: block; margin-bottom: var(--ts-space-xs); }

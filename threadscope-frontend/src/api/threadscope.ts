@@ -13,6 +13,9 @@ import type {
   DumpComparison,
   CallTreeNode,
   CorrelationResult,
+  LockGraphView,
+  CodeLayerConfig,
+  UploadOptions,
 } from '@/types'
 
 /** 后端统一错误体（GlobalExceptionHandler.ErrorResponse） */
@@ -57,11 +60,18 @@ api.interceptors.response.use(undefined, (error) => Promise.reject(toFriendlyErr
  */
 export async function uploadDump(
   files: File[],
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  options: UploadOptions = {},
 ): Promise<UploadResponse> {
   const formData = new FormData()
   for (const file of files) {
     formData.append('file', file)
+  }
+  if (options.businessPackages?.length) {
+    formData.append('businessPackages', options.businessPackages.join(','))
+  }
+  if (options.applicationName) {
+    formData.append('applicationName', options.applicationName)
   }
   // 不手动设置 Content-Type：交给浏览器生成带 boundary 的 multipart 头
   const { data } = await api.post<UploadResponse>('/dump/upload', formData, {
@@ -75,12 +85,22 @@ export async function uploadDump(
   return data
 }
 
-export async function pasteDump(content: string): Promise<UploadResponse> {
+export async function pasteDump(content: string, options: UploadOptions = {}): Promise<UploadResponse> {
   const { data } = await api.post<UploadResponse>(
     '/dump/paste',
-    { content },
+    {
+      content,
+      businessPackages: options.businessPackages ?? [],
+      applicationName: options.applicationName ?? null,
+    },
     { timeout: UPLOAD_TIMEOUT_MS }
   )
+  return data
+}
+
+// ── Config ──
+export async function fetchCodeLayerConfig(): Promise<CodeLayerConfig> {
+  const { data } = await api.get<CodeLayerConfig>('/config/code-layers')
   return data
 }
 
@@ -99,6 +119,7 @@ export async function fetchThreads(
     nid?: string
     lockAddress?: string
     poolName?: string
+    kind?: string
     sort?: string
     page?: number
     size?: number
@@ -108,8 +129,9 @@ export async function fetchThreads(
   return data
 }
 
-export async function fetchThread(analysisId: string, threadName: string): Promise<ThreadInfo> {
-  const { data } = await api.get<ThreadInfo>(`/analysis/${analysisId}/threads/${encodeURIComponent(threadName)}`)
+/** 按线程标识 (key) 或线程名查询 — 优先匹配 key，线程名可能重名 */
+export async function fetchThread(analysisId: string, ref: string): Promise<ThreadInfo> {
+  const { data } = await api.get<ThreadInfo>(`/analysis/${analysisId}/thread`, { params: { ref } })
   return data
 }
 
@@ -134,6 +156,24 @@ export async function fetchThreadsBatchSummary(
 // ── Locks ──
 export async function fetchLocks(analysisId: string): Promise<{ lockInfos: LockInfo[]; deadlocks: DeadlockInfo }> {
   const { data } = await api.get(`/analysis/${analysisId}/locks`)
+  return data
+}
+
+/** 按地址查锁，包括没有等待者的持有锁。找不到返回 null。 */
+export async function fetchLockByAddress(analysisId: string, address: string): Promise<LockInfo | null> {
+  try {
+    const { data } = await api.get<LockInfo>(`/analysis/${analysisId}/locks/by-address`, { params: { address } })
+    return data
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('404')) return null
+    throw error
+  }
+}
+
+export async function fetchLockGraph(analysisId: string, includeConditionWaits = false): Promise<LockGraphView> {
+  const { data } = await api.get<LockGraphView>(`/analysis/${analysisId}/lock-graph`, {
+    params: { includeConditionWaits },
+  })
   return data
 }
 

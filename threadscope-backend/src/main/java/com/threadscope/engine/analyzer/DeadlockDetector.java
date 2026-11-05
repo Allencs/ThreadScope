@@ -31,11 +31,15 @@ public class DeadlockDetector {
             chains.addAll(parseJvmDeadlockSection(deadlockSection));
         }
 
+        // 图节点用线程标识 (重名线程不会被合并)，输出时再换回线程名
+        Map<String, String> nameByKey = new HashMap<>();
+        for (ThreadInfo t : threads) nameByKey.put(t.key(), t.name());
+
         // 策略2: 自主图分析检测 (补充JVM未报告的潜在死锁)
-        chains.addAll(detectByGraphAnalysis(threads));
+        chains.addAll(detectByGraphAnalysis(threads, nameByKey));
 
         // 策略3: JUC 锁 (ReentrantLock/Semaphore 等) 死锁检测
-        chains.addAll(detectJucDeadlocks(threads));
+        chains.addAll(detectJucDeadlocks(threads, nameByKey));
 
         // 去重
         chains = deduplicateChains(chains);
@@ -50,26 +54,26 @@ public class DeadlockDetector {
      * 仅基于 synchronized 互斥锁 (WaitingToLock) 构图，
      * 排除 parking/waiting on 等条件等待，避免产生大量误报。
      */
-    private List<DeadlockInfo.DeadlockChain> detectByGraphAnalysis(List<ThreadInfo> threads) {
-        // 构建锁持有映射: lockAddress → holderThreadName
+    private List<DeadlockInfo.DeadlockChain> detectByGraphAnalysis(List<ThreadInfo> threads, Map<String, String> nameByKey) {
+        // 构建锁持有映射: lockAddress → holder key
         Map<String, String> lockHolders = new HashMap<>();
         for (ThreadInfo thread : threads) {
             for (String lockAddr : thread.heldLockAddresses()) {
-                lockHolders.put(lockAddr, thread.name());
+                lockHolders.put(lockAddr, thread.key());
             }
         }
 
-        // 构建等待关系: threadName → waitingForLockAddress
+        // 构建等待关系: thread key → waitingForLockAddress
         // 仅使用 blockingLockAddress() — 只有 "waiting to lock" 才参与死锁检测
         Map<String, String> threadWaiting = new HashMap<>();
         for (ThreadInfo thread : threads) {
             String waitLock = thread.blockingLockAddress();
             if (waitLock != null) {
-                threadWaiting.put(thread.name(), waitLock);
+                threadWaiting.put(thread.key(), waitLock);
             }
         }
 
-        return findCycles(threadWaiting, lockHolders, "Deadlock detected: ");
+        return findCycles(threadWaiting, lockHolders, nameByKey, "Deadlock detected: ");
     }
 
     /**
@@ -82,8 +86,8 @@ public class DeadlockDetector {
      * 保守策略：只有当 parking 等待的锁地址能对应到明确的 ownable synchronizer 持有者、
      * 且形成完整环时才报告，避免把普通的 Condition.await 误判为死锁。
      */
-    private List<DeadlockInfo.DeadlockChain> detectJucDeadlocks(List<ThreadInfo> threads) {
-        // 持有边: ownable synchronizer 地址 → holder
+    private List<DeadlockInfo.DeadlockChain> detectJucDeadlocks(List<ThreadInfo> threads, Map<String, String> nameByKey) {
+        // 持有边: ownable synchronizer 地址 → holder key
         Map<String, String> jucHolders = new HashMap<>();
         for (ThreadInfo thread : threads) {
             for (String sync : thread.ownableSynchronizers()) {
@@ -93,7 +97,7 @@ public class DeadlockDetector {
                 if (addr.startsWith("<") && addr.endsWith(">")) {
                     addr = addr.substring(1, addr.length() - 1);
                 }
-                jucHolders.putIfAbsent(addr, thread.name());
+                jucHolders.putIfAbsent(addr, thread.key());
             }
         }
         if (jucHolders.isEmpty()) return List.of();
@@ -104,14 +108,14 @@ public class DeadlockDetector {
             for (LockAction action : thread.lockActions()) {
                 if (action instanceof LockAction.ParkingToWaitFor parking) {
                     String holder = jucHolders.get(parking.lockAddress());
-                    if (holder != null && !holder.equals(thread.name())) {
-                        threadWaiting.put(thread.name(), parking.lockAddress());
+                    if (holder != null && !holder.equals(thread.key())) {
+                        threadWaiting.put(thread.key(), parking.lockAddress());
                     }
                 }
             }
         }
 
-        return findCycles(threadWaiting, jucHolders, "Suspected JUC lock deadlock: ");
+        return findCycles(threadWaiting, jucHolders, nameByKey, "Suspected JUC lock deadlock: ");
     }
 
     /**
@@ -126,6 +130,7 @@ public class DeadlockDetector {
     private List<DeadlockInfo.DeadlockChain> findCycles(
             Map<String, String> threadWaiting,
             Map<String, String> lockHolders,
+            Map<String, String> nameByKey,
             String descPrefix) {
         List<DeadlockInfo.DeadlockChain> chains = new ArrayList<>();
         Set<String> done = new HashSet<>();
@@ -164,8 +169,9 @@ public class DeadlockDetector {
                         .filter(Objects::nonNull)
                         .toList();
 
-                    String desc = descPrefix + String.join(" → ", cycle) + " → " + cycleEntry;
-                    chains.add(new DeadlockInfo.DeadlockChain(cycle, cycleLocks, desc));
+                    List<String> names = cycle.stream().map(k -> nameByKey.getOrDefault(k, k)).toList();
+                    String desc = descPrefix + String.join(" → ", names) + " → " + names.getFirst();
+                    chains.add(new DeadlockInfo.DeadlockChain(names, cycleLocks, desc));
                 }
             }
         }

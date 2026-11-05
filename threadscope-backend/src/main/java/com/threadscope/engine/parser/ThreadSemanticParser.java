@@ -5,6 +5,7 @@ import com.threadscope.model.*;
 
 import java.util.*;
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 单个线程块的语义解析器。
@@ -13,6 +14,8 @@ import java.util.regex.Matcher;
  * 该解析器是无状态的、线程安全的，可以被 Virtual Threads 并行调用。
  */
 public class ThreadSemanticParser {
+
+    private static final Pattern TRAILING_STACK_ADDRESS = Pattern.compile("\\[(0x[0-9a-fA-F]+)]\\s*$");
 
     /**
      * 解析一个原始线程块为完整的 ThreadInfo。
@@ -40,10 +43,14 @@ public class ThreadSemanticParser {
         // 3. 解析堆栈帧和锁操作
         List<StackFrame> stackFrames = new ArrayList<>();
         List<LockAction> lockActions = new ArrayList<>();
-        parseBodyLines(block.bodyLines(), stackFrames, lockActions);
+        String carriedVirtualThread = parseBodyLines(block.bodyLines(), stackFrames, lockActions);
 
         // 4. 解析可拥有同步器
         List<String> ownableSynchronizers = parseOwnableSynchronizers(block.ownableSyncLines());
+
+        // 5. 载体线程识别：显式的 "Carrying virtual thread #N"，或栈中正在执行 Continuation
+        ThreadKind kind = carriedVirtualThread != null || hasContinuationFrame(stackFrames)
+            ? ThreadKind.CARRIER : ThreadKind.PLATFORM;
 
         return new ThreadInfo(
             headerInfo.name(),
@@ -61,8 +68,24 @@ public class ThreadSemanticParser {
             headerInfo.stackAddress(),
             List.copyOf(stackFrames),
             List.copyOf(lockActions),
-            List.copyOf(ownableSynchronizers)
+            List.copyOf(ownableSynchronizers),
+            null,
+            kind,
+            carriedVirtualThread,
+            null,
+            false
         );
+    }
+
+    private static boolean hasContinuationFrame(List<StackFrame> frames) {
+        for (StackFrame f : frames) {
+            String cls = f.className();
+            if (("jdk.internal.vm.Continuation".equals(cls) && (f.methodName().startsWith("enter") || "run".equals(f.methodName())))
+                || ("java.lang.VirtualThread".equals(cls) && "runContinuation".equals(f.methodName()))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -105,16 +128,30 @@ public class ThreadSemanticParser {
             );
         }
 
-        // 尝试简化格式
+        // 尝试简化格式 (JVM 内部线程常缺少 #N，字段逐个提取)
         Matcher sm = DumpPatterns.THREAD_HEADER_SIMPLE.matcher(headerLine);
         if (sm.find()) {
             String nidRaw = sm.group(2);
             long nidDecimal = parseNid(nidRaw);
             String nidDisplay = nidRaw.startsWith("0x") ? nidRaw : "0x" + Long.toHexString(nidDecimal);
+            String rest = headerLine.substring(sm.end(2));
+            String stackAddr = null;
+            Matcher addr = TRAILING_STACK_ADDRESS.matcher(rest);
+            if (addr.find()) {
+                stackAddr = addr.group(1);
+                rest = rest.substring(0, addr.start());
+            }
             return new HeaderInfo(
-                sm.group(1), 0, false, 5, 0,
-                null, null, "0x0", nidDisplay, nidDecimal,
-                sm.group(3), null
+                sm.group(1),
+                parseLongSafe(field(DumpPatterns.HEADER_NUMBER, headerLine)),
+                DumpPatterns.HEADER_DAEMON.matcher(headerLine).find(),
+                parseIntSafe(Objects.requireNonNullElse(field(DumpPatterns.HEADER_PRIO, headerLine), "5")),
+                parseIntSafe(field(DumpPatterns.HEADER_OS_PRIO, headerLine)),
+                field(DumpPatterns.HEADER_CPU, headerLine),
+                field(DumpPatterns.HEADER_ELAPSED, headerLine),
+                Objects.requireNonNullElse(field(DumpPatterns.HEADER_TID, headerLine), "0x0"),
+                nidDisplay, nidDecimal,
+                rest.isBlank() ? sm.group(3) : rest.trim(), stackAddr
             );
         }
 
@@ -130,8 +167,18 @@ public class ThreadSemanticParser {
     //  堆栈体解析
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private void parseBodyLines(List<String> lines, List<StackFrame> frames, List<LockAction> locks) {
+    /**
+     * @return 载体线程正在承载的虚拟线程标识 ("#23")，非载体线程返回 null
+     */
+    private String parseBodyLines(List<String> lines, List<StackFrame> frames, List<LockAction> locks) {
+        String carried = null;
         for (String line : lines) {
+            Matcher carrying = DumpPatterns.CARRYING_VIRTUAL_THREAD.matcher(line);
+            if (carrying.find()) {
+                carried = "#" + carrying.group(1);
+                continue;
+            }
+
             // 尝试匹配堆栈帧
             Matcher frameMatcher = DumpPatterns.STACK_FRAME.matcher(line);
             if (frameMatcher.find()) {
@@ -170,6 +217,12 @@ public class ThreadSemanticParser {
                 locks.add(new LockAction.WaitingOn(lockWaitingOn.group(1), lockWaitingOn.group(2), currentFrameIdx));
             }
         }
+        return carried;
+    }
+
+    private static String field(Pattern pattern, String line) {
+        Matcher m = pattern.matcher(line);
+        return m.find() ? m.group(1) : null;
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

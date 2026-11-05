@@ -13,13 +13,19 @@ public record LockInfo(
     String lockClassName,
     String holderThreadName,
     List<String> waitingThreadNames,
-    List<String> blockedWaiterNames
+    List<String> blockedWaiterNames,
+    String holderThreadKey
 ) {
     /**
      * 兼容旧构造 — 向后兼容不区分 blocked/non-blocked 的场景。
      */
     public LockInfo(String lockAddress, String lockClassName, String holderThreadName, List<String> waitingThreadNames) {
-        this(lockAddress, lockClassName, holderThreadName, waitingThreadNames, List.of());
+        this(lockAddress, lockClassName, holderThreadName, waitingThreadNames, List.of(), null);
+    }
+
+    public LockInfo(String lockAddress, String lockClassName, String holderThreadName,
+                    List<String> waitingThreadNames, List<String> blockedWaiterNames) {
+        this(lockAddress, lockClassName, holderThreadName, waitingThreadNames, blockedWaiterNames, null);
     }
 
     /** 所有等待者数量 */

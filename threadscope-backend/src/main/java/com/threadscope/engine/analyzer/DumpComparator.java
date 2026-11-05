@@ -16,6 +16,10 @@ import java.util.stream.Collectors;
  * 1. 栈不动检测 — 同一线程在所有 dump 中栈指纹完全一致 (排除正常的池内空闲等待)
  * 2. CPU 差值   — 首末 dump 的 cpu= 时间差，定位真实的 CPU 消耗者
  * 3. 线程趋势   — 按名称前缀聚合的数量变化，暴露线程泄漏
+ *
+ * 跨 dump 配对用 "线程名 + 线程标识"：
+ * - 只用线程名会把重名线程 (自建池里的同名 worker) 配错
+ * - Java 线程 ID (#N) 同一 JVM 内唯一且不复用，但 JVM 重启后会从头分配，需结合存活时间识别重启
  */
 public class DumpComparator {
 
@@ -23,33 +27,8 @@ public class DumpComparator {
     private static final int STUCK_TOP_FRAMES = 5;
     private static final int TREND_MIN_VARIATION = 3;   // 数量波动小于该值的组不展示
     private static final int TREND_LIMIT = 20;
-
-    /** 池内空闲等待的典型栈顶 — 这些线程栈天然不动，不算"卡死" */
-    private static final Set<String> IDLE_TOP_METHODS = Set.of(
-        "jdk.internal.misc.Unsafe.park",
-        "sun.misc.Unsafe.park",
-        "java.lang.Object.wait",
-        "java.lang.Object.wait0",
-        "java.lang.Thread.sleep",
-        "java.lang.Thread.sleep0",
-        "java.lang.Thread.sleepNanos0",
-        "java.lang.VirtualThread.takeVirtualThreadListToUnblock",
-        // accept 循环 — 等新连接是常态
-        "sun.nio.ch.Net.accept",
-        "sun.nio.ch.ServerSocketChannelImpl.accept",
-        "java.net.PlainSocketImpl.socketAccept",
-        "sun.nio.ch.EPollArrayWrapper.epollWait",
-        "sun.nio.ch.EPoll.wait",
-        "sun.nio.ch.KQueue.poll",
-        "sun.nio.ch.WindowsSelectorImpl$SubSelector.poll0",
-        "java.lang.ref.Reference.waitForReferencePendingList",
-        "java.lang.ProcessHandleImpl.waitForProcessExit0",
-        // Netty 事件循环 (epoll / kqueue / io_uring) — 等事件是常态
-        "io.netty.channel.epoll.Native.epollWait",
-        "io.netty.channel.epoll.Native.epollWait0",
-        "io.netty.channel.kqueue.Native.keventWait",
-        "io.netty.channel.uring.Native.ioUringEnter"
-    );
+    /** 配对线程中存活时间变短的比例超过该值 → 判定 JVM 重启 */
+    private static final double RESTART_RATIO = 0.5;
 
     /**
      * 对比多份 dump。
@@ -69,36 +48,72 @@ public class DumpComparator {
             ));
         }
 
+        List<Map<String, ThreadInfo>> maps = dumps.stream().map(DumpComparator::indexByMatchKey).toList();
+        boolean restarted = detectRestart(maps);
+        int matched = (int) maps.getFirst().keySet().stream().filter(maps.getLast()::containsKey).count();
+
         return new DumpComparison(
             dumps.size(),
             snapshots,
-            findStuckThreads(dumps),
-            computeCpuDeltas(dumps),
-            computeThreadTrends(dumps)
+            restarted ? List.of() : findStuckThreads(dumps.getFirst(), maps),
+            restarted ? List.of() : computeCpuDeltas(maps.getFirst(), maps.getLast()),
+            computeThreadTrends(dumps),
+            restarted,
+            restarted ? 0 : matched
         );
+    }
+
+    /** 跨 dump 配对键 */
+    static String matchKey(ThreadInfo t) {
+        return t.name() + "|" + t.key();
+    }
+
+    private static Map<String, ThreadInfo> indexByMatchKey(List<ThreadInfo> threads) {
+        return threads.stream().collect(Collectors.toMap(DumpComparator::matchKey, t -> t, (a, b) -> a));
+    }
+
+    /**
+     * JVM 重启检测：配对上的线程，若后一份 dump 中存活时间 (elapsed) 明显变短，说明不是同一个线程。
+     * 没有 elapsed 字段的 dump (JDK 8) 无法判断，返回 false。
+     */
+    private static boolean detectRestart(List<Map<String, ThreadInfo>> maps) {
+        for (int i = 1; i < maps.size(); i++) {
+            Map<String, ThreadInfo> prev = maps.get(i - 1);
+            Map<String, ThreadInfo> cur = maps.get(i);
+            int compared = 0;
+            int shrunk = 0;
+            for (var e : prev.entrySet()) {
+                ThreadInfo after = cur.get(e.getKey());
+                if (after == null) continue;
+                double before = HealthChecker.parseElapsedSeconds(e.getValue().elapsed());
+                double now = HealthChecker.parseElapsedSeconds(after.elapsed());
+                if (before < 0 || now < 0) continue;
+                compared++;
+                if (now + 1.0 < before) shrunk++;
+            }
+            if (compared > 0 && (double) shrunk / compared > RESTART_RATIO) return true;
+            // 一个线程都配不上而两边都有线程，同样视为重启 (所有 Java 线程 ID 都变了)
+            if (!prev.isEmpty() && !cur.isEmpty() && prev.keySet().stream().noneMatch(cur::containsKey)) return true;
+        }
+        return false;
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  栈不动检测
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private List<StuckThread> findStuckThreads(List<List<ThreadInfo>> dumps) {
-        List<ThreadInfo> first = dumps.getFirst();
-        List<Map<String, ThreadInfo>> maps = dumps.stream()
-            .map(list -> list.stream().collect(
-                Collectors.toMap(ThreadInfo::name, t -> t, (a, b) -> a)))
-            .toList();
-
+    private List<StuckThread> findStuckThreads(List<ThreadInfo> first, List<Map<String, ThreadInfo>> maps) {
         List<StuckThread> stuck = new ArrayList<>();
         for (ThreadInfo thread : first) {
             if (thread.stackTrace().size() < 3) continue;   // 浅栈没有指纹意义
             if (isIdleParked(thread)) continue;             // 池内正常空闲
 
+            String key = matchKey(thread);
             String fingerprint = thread.stackFingerprint();
             boolean inAllAndUnchanged = true;
             ThreadInfo last = thread;
             for (int i = 1; i < maps.size(); i++) {
-                ThreadInfo other = maps.get(i).get(thread.name());
+                ThreadInfo other = maps.get(i).get(key);
                 if (other == null || !fingerprint.equals(other.stackFingerprint())) {
                     inAllAndUnchanged = false;
                     break;
@@ -109,8 +124,9 @@ public class DumpComparator {
             if (inAllAndUnchanged) {
                 stuck.add(new StuckThread(
                     thread.name(),
+                    last.key(),
                     last.state(),
-                    dumps.size(),
+                    maps.size(),
                     last.topMethod(),
                     last.stackTrace().stream()
                         .limit(STUCK_TOP_FRAMES)
@@ -126,32 +142,23 @@ public class DumpComparator {
         return stuck;
     }
 
-    /** 判断线程是否处于池内空闲等待 (栈顶是 park/wait/epoll 等且没有等锁) */
+    /**
+     * 判断线程是否处于空闲等待 (等任务 / 等事件)。BLOCKED 永远值得关注；
+     * 在任务中等资源 (getConnection、Future.get) 且栈一直不动的线程不算空闲 — 它们正是要找的卡点。
+     */
     private boolean isIdleParked(ThreadInfo thread) {
-        if (thread.state() == ThreadState.BLOCKED) return false;   // BLOCKED 永远值得关注
-        String top = normalize(thread.topMethod());
-        return IDLE_TOP_METHODS.contains(top);
-    }
-
-    private static String normalize(String fullMethod) {
-        int slash = fullMethod.indexOf('/');
-        return slash >= 0 ? fullMethod.substring(slash + 1) : fullMethod;
+        return FrameClassifier.isIdleWorker(thread);
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  CPU 差值
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private List<CpuDelta> computeCpuDeltas(List<List<ThreadInfo>> dumps) {
-        Map<String, ThreadInfo> firstMap = dumps.getFirst().stream()
-            .collect(Collectors.toMap(ThreadInfo::name, t -> t, (a, b) -> a));
-        // 同名线程都取"首个出现"，保证首末快照对齐 (重名线程无法可靠配对)
-        Map<String, ThreadInfo> lastMap = dumps.getLast().stream()
-            .collect(Collectors.toMap(ThreadInfo::name, t -> t, (a, b) -> a));
-
+    private List<CpuDelta> computeCpuDeltas(Map<String, ThreadInfo> firstMap, Map<String, ThreadInfo> lastMap) {
         List<CpuDelta> deltas = new ArrayList<>();
-        for (ThreadInfo last : lastMap.values()) {
-            ThreadInfo firstThread = firstMap.get(last.name());
+        for (var e : lastMap.entrySet()) {
+            ThreadInfo last = e.getValue();
+            ThreadInfo firstThread = firstMap.get(e.getKey());
             if (firstThread == null) continue;
 
             double firstCpu = parseCpuMs(firstThread.cpuTime());
@@ -161,7 +168,7 @@ public class DumpComparator {
             double delta = lastCpu - firstCpu;
             if (delta > 0) {
                 deltas.add(new CpuDelta(
-                    last.name(), delta, firstCpu, lastCpu, last.state(), last.topMethod()));
+                    last.name(), last.key(), delta, firstCpu, lastCpu, last.state(), last.topMethod()));
             }
         }
 

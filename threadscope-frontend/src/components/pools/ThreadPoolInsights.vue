@@ -12,7 +12,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
-import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo } from '@/types'
+import { STATE_COLORS, STATE_LABELS, type ThreadState, type ThreadInfo, type ThreadPoolInfo, type PoolCategory } from '@/types'
 
 interface PoolTooltipEntry {
   state: ThreadState
@@ -47,12 +47,51 @@ const store = useAnalysisStore()
 // ── Search ──
 const searchQuery = ref('')
 
+// ── Category ──
+const CATEGORY_LABELS: Record<PoolCategory, string> = {
+  WEB: 'Web 容器',
+  RPC: 'RPC',
+  DB: '数据库',
+  MQ: '消息队列',
+  CACHE: '缓存',
+  SCHEDULER: '定时调度',
+  ASYNC: '异步任务',
+  EVENT_LOOP: '事件循环',
+  VIRTUAL: '虚拟线程',
+  JVM: 'JVM 内部',
+  LOGGING: '日志',
+  CUSTOM: '自定义',
+  ANONYMOUS: '未命名',
+}
+/** 不参与"耗尽"判定的类别 — 与后端 ThreadPoolDetector.NON_EXHAUSTIBLE_CATEGORIES 一致 */
+const NON_EXHAUSTIBLE: PoolCategory[] = ['JVM', 'VIRTUAL']
+
+const categoryFilter = ref<PoolCategory | null>(null)
+
+const categoryCounts = computed(() => {
+  const counts = new Map<PoolCategory, number>()
+  for (const p of store.threadPools) counts.set(p.category, (counts.get(p.category) ?? 0) + 1)
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])
+})
+
+function utilization(pool: ThreadPoolInfo): number {
+  return pool.totalThreads > 0 ? (pool.busyCount / pool.totalThreads) * 100 : 0
+}
+
+function utilizationLevel(pool: ThreadPoolInfo): 'danger' | 'warning' | 'ok' | 'na' {
+  if (NON_EXHAUSTIBLE.includes(pool.category)) return 'na'
+  const u = utilization(pool)
+  if (u >= 90 && pool.totalThreads >= 5) return 'danger'
+  if (u >= 70) return 'warning'
+  return 'ok'
+}
+
 // ── Filtered pools ──
 const filteredPools = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return store.threadPools
   return store.threadPools.filter(pool =>
-    pool.poolName.toLowerCase().includes(q)
+    (!categoryFilter.value || pool.category === categoryFilter.value) &&
+    (!q || pool.poolName.toLowerCase().includes(q) || pool.poolType.toLowerCase().includes(q))
   )
 })
 
@@ -139,9 +178,9 @@ function togglePool(poolName: string) {
   }
 }
 
-function navigateToThread(threadName: string) {
+function navigateToThread(thread: ThreadInfo) {
   const analysisId = route.params.analysisId as string
-  store.openThreadDetailTab(threadName)
+  store.openThreadDetailTab(thread.key, thread.name)
   router.push({ name: 'threads', params: { analysisId } })
 }
 
@@ -240,7 +279,7 @@ function hidePoolTooltip() {
           v-model="searchQuery"
           type="text"
           class="search-input mono"
-          placeholder="Search pool by name..."
+          placeholder="Search pool by name or type..."
         />
         <button
           v-if="searchQuery"
@@ -253,6 +292,22 @@ function hidePoolTooltip() {
           </svg>
         </button>
       </div>
+    </div>
+
+    <!-- Category Filter -->
+    <div v-if="categoryCounts.length > 1" class="category-bar">
+      <button
+        class="category-chip"
+        :class="{ 'category-chip--active': categoryFilter === null }"
+        @click="categoryFilter = null"
+      >全部 <span class="mono">{{ store.threadPools.length }}</span></button>
+      <button
+        v-for="[cat, count] in categoryCounts"
+        :key="cat"
+        class="category-chip"
+        :class="['category-chip--' + cat.toLowerCase(), { 'category-chip--active': categoryFilter === cat }]"
+        @click="categoryFilter = categoryFilter === cat ? null : cat"
+      >{{ CATEGORY_LABELS[cat] ?? cat }} <span class="mono">{{ count }}</span></button>
     </div>
 
     <!-- Pool List -->
@@ -273,6 +328,19 @@ function hidePoolTooltip() {
           <span class="pool-name mono">{{ pool.poolName }}</span>
 
           <span class="pool-type-tag">{{ pool.poolType }}</span>
+          <span class="pool-category-tag" :class="'pool-category-tag--' + pool.category.toLowerCase()">
+            {{ CATEGORY_LABELS[pool.category] ?? pool.category }}
+          </span>
+          <span v-if="pool.hints?.length" class="pool-hint-tag" :title="pool.hints.join('\n')">治理建议</span>
+
+          <span
+            class="pool-util"
+            :class="'pool-util--' + utilizationLevel(pool)"
+            :title="`按栈判定：${pool.busyCount} 个线程正在执行任务或在任务中等待资源，${pool.idleCount} 个线程在等新任务`"
+          >
+            忙 {{ pool.busyCount }} / {{ pool.totalThreads }}
+            <span class="pool-util__bar"><span :style="{ width: utilization(pool) + '%' }"></span></span>
+          </span>
 
           <span v-if="store.poolThreadsLoading[pool.poolName]" class="pool-loading-tag">
             Loading…
@@ -316,6 +384,10 @@ function hidePoolTooltip() {
 
         <!-- Expanded: Thread Instances -->
         <div v-if="isExpanded(pool.poolName)" class="pool-thread-list thread-expand-enter">
+          <div v-if="pool.hints?.length" class="pool-hints">
+            <div v-for="(hint, hi) in pool.hints" :key="hi" class="pool-hint">💡 {{ hint }}</div>
+          </div>
+
           <!-- Loading -->
           <div v-if="store.poolThreadsLoading[pool.poolName]" class="pool-loading">
             <div class="spinner"></div>
@@ -377,10 +449,10 @@ function hidePoolTooltip() {
 
             <div
               v-for="thread in sortedThreads(pool.poolName)"
-              :key="thread.name"
+              :key="thread.key"
               class="thread-row"
             >
-              <div class="thread-row-header" @click="navigateToThread(thread.name)">
+              <div class="thread-row-header" @click="navigateToThread(thread)">
                 <span
                   class="state-badge"
                   :class="getStateBadgeClass(thread.state)"
@@ -406,7 +478,7 @@ function hidePoolTooltip() {
                   {{ thread.stackTrace.length }} frames
                 </span>
 
-                <span class="thread-nid mono">nid={{ thread.nid }}</span>
+                <span class="thread-nid mono">{{ thread.nidDecimal > 0 ? 'nid=' + thread.nid : thread.key }}</span>
 
                 <span v-if="thread.lockActions?.some(a => a.lockAddress)" class="lock-icon" title="Has lock activity">🔒</span>
 
@@ -648,6 +720,86 @@ function hidePoolTooltip() {
   flex-shrink: 0;
   letter-spacing: 0.2px;
 }
+
+.pool-category-tag {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: var(--ts-radius-full);
+  background: var(--ts-bg-inset);
+  color: var(--ts-text-secondary);
+  flex-shrink: 0;
+}
+.pool-category-tag--anonymous { background: #fffbeb; color: #b45309; }
+.pool-category-tag--virtual { background: #f5f3ff; color: #7c3aed; }
+.pool-category-tag--jvm { color: var(--ts-text-muted); }
+
+.pool-hint-tag {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: var(--ts-radius-full);
+  border: 1px dashed #f59e0b;
+  color: #b45309;
+  flex-shrink: 0;
+  cursor: help;
+}
+
+.pool-util {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--ts-font-size-xs);
+  font-family: var(--ts-font-display);
+  color: var(--ts-text-secondary);
+  flex-shrink: 0;
+  cursor: help;
+}
+.pool-util__bar {
+  width: 54px;
+  height: 5px;
+  border-radius: var(--ts-radius-full);
+  background: var(--ts-bg-elevated);
+  overflow: hidden;
+}
+.pool-util__bar > span { display: block; height: 100%; background: #16a34a; }
+.pool-util--warning .pool-util__bar > span { background: #d97706; }
+.pool-util--danger { color: var(--ts-danger); font-weight: 600; }
+.pool-util--danger .pool-util__bar > span { background: var(--ts-danger); }
+.pool-util--na .pool-util__bar > span { background: #9ca3af; }
+
+.pool-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: var(--ts-space-sm) var(--ts-space-md);
+  padding: var(--ts-space-sm) var(--ts-space-md);
+  border-radius: var(--ts-radius-md);
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+.pool-hint {
+  font-size: var(--ts-font-size-xs);
+  color: #92400e;
+  line-height: 1.6;
+}
+
+.category-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.category-chip {
+  padding: 3px 10px;
+  border: var(--ts-border);
+  border-radius: var(--ts-radius-full);
+  background: var(--ts-bg-surface);
+  color: var(--ts-text-secondary);
+  font-size: var(--ts-font-size-xs);
+  cursor: pointer;
+  transition: all var(--ts-transition);
+}
+.category-chip span { color: var(--ts-text-muted); margin-left: 2px; }
+.category-chip:hover { border-color: var(--ts-accent); color: var(--ts-accent); }
+.category-chip--active { background: var(--ts-accent-light); border-color: var(--ts-accent); color: var(--ts-accent); font-weight: 600; }
 
 /* ── Mini state distribution bar ── */
 .pool-mini-bar {

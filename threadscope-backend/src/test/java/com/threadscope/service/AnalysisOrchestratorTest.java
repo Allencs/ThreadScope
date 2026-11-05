@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class AnalysisOrchestratorTest {
 
     private final AnalysisOrchestrator orchestrator =
-        new AnalysisOrchestrator(new AnalysisProperties(50_000, 30, 150_000, 60));
+        new AnalysisOrchestrator(AnalysisProperties.defaults());
 
     private static String dump(String extraThread, String cpu) {
         return "Full thread dump Java HotSpot(TM) 64-Bit Server VM (21+35 mixed mode):\n\n" +

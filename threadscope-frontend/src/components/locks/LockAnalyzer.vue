@@ -16,20 +16,37 @@ import { useAnalysisStore } from '@/stores/analysisStore'
 import { STATE_COLORS, STATE_LABELS } from '@/types'
 import type { ThreadInfo, ThreadSummary, ThreadState, LockAction, LockInfo } from '@/types'
 import * as api from '@/api/threadscope'
+import StackTraceView from '@/components/common/StackTraceView.vue'
+import LockGraphView from './LockGraphView.vue'
 
 const store = useAnalysisStore()
 const route = useRoute()
 const router = useRouter()
 
-function navigateToThread(threadName: string) {
-  store.openThreadDetailTab(threadName)
+/** 关系图 / 列表视图 — 默认展示关系图，一眼看清谁拖住了谁 */
+const viewMode = ref<'graph' | 'list'>('graph')
+
+function navigateToThread(threadRef: string, label?: string) {
+  store.openThreadDetailTab(threadRef, label)
   router.push({ name: 'threads', params: { analysisId: route.params.analysisId } })
+}
+
+function openHolder(lock: LockInfo) {
+  if (!lock.holderThreadName) return
+  navigateToThread(lock.holderThreadKey || lock.holderThreadName, lock.holderThreadName)
+}
+
+function showLockInList(addr: string) {
+  revealLock(addr)
 }
 
 // ── Lock level expand state ──
 const expandedLocks = ref<Set<string>>(new Set())
 const lockRefs = ref<Record<string, HTMLElement | null>>({})
 const searchQuery = ref('')
+/** 从线程栈点进来、但不在竞争列表中的锁（只有持有者、没有等待者） */
+const focusedLock = ref<LockInfo | null>(null)
+const focusNote = ref('')
 
 // ── Thread level expand state ──
 const expandedThreads = ref<Set<string>>(new Set())
@@ -73,14 +90,35 @@ onBeforeUnmount(() => {
 onMounted(async () => {
   await store.loadLocks()
   if (store.highlightLockAddress) {
-    await nextTick()
-    expandAndScrollTo(store.highlightLockAddress)
+    await revealLock(store.highlightLockAddress)
   }
 })
 
 watch(() => store.highlightLockAddress, (addr) => {
-  if (addr) expandAndScrollTo(addr)
+  if (!addr) return
+  revealLock(addr)
 })
+
+/** 竞争列表里有就滚动定位；没有等待者的持有锁单独拉详情展示。 */
+async function revealLock(addr: string) {
+  viewMode.value = 'list'
+  focusNote.value = ''
+  await nextTick()
+  const existing = store.locks.find(l => l.lockAddress === addr)
+  if (existing) {
+    focusedLock.value = null
+    expandAndScrollTo(addr)
+    return
+  }
+  if (!store.analysisId) return
+  try {
+    focusedLock.value = await api.fetchLockByAddress(store.analysisId, addr)
+    if (!focusedLock.value) focusNote.value = '没有在这份 dump 里找到这把锁'
+  } catch (e) {
+    focusedLock.value = null
+    focusNote.value = e instanceof Error ? e.message : '加载锁详情失败'
+  }
+}
 
 // ── Filtered locks ──
 const filteredLocks = computed(() => {
@@ -323,47 +361,6 @@ const lockMap = computed<Record<string, LockInfo>>(() => {
   return map
 })
 
-function getLockContentionInfo(lock: LockAction): LockInfo | null {
-  if (lock.type !== 'Held') return null
-  return lockMap.value[lock.lockAddress] ?? null
-}
-
-function getLockTypeTag(className: string): string {
-  if (className.includes('ConditionObject')) return 'Condition'
-  if (className.includes('SynchronousQueue') || className.includes('BlockingQueue') || className.includes('LinkedBlockingQueue') || className.includes('ArrayBlockingQueue')) return 'Queue'
-  if (className.includes('CountDownLatch')) return 'Latch'
-  if (className.includes('Semaphore')) return 'Semaphore'
-  if (className.includes('FutureTask') || className.includes('CompletableFuture')) return 'Future'
-  if (className.includes('ReentrantReadWriteLock')) return 'RWLock'
-  if (className.includes('ReentrantLock') || className.includes('NonfairSync') || className.includes('FairSync')) return 'Lock'
-  if (className.includes('AbstractQueuedSynchronizer') || className.includes('AbstractOwnableSynchronizer')) return 'AQS'
-  return 'Monitor'
-}
-
-function getLockActionsForFrame(thread: ThreadInfo, frameIdx: number): LockAction[] {
-  return thread.lockActions.filter(la => la.frameIndex === frameIdx)
-}
-
-function getLockActionLabel(lock: LockAction): string {
-  switch (lock.type) {
-    case 'Held': return '- locked'
-    case 'WaitingToLock': return '- waiting to lock'
-    case 'ParkingToWaitFor': return '- parking to wait for'
-    case 'WaitingOn': return '- waiting on'
-    default: return '- lock operation'
-  }
-}
-
-function getLockActionCssClass(lock: LockAction): string {
-  switch (lock.type) {
-    case 'Held': return 'lock-action--held'
-    case 'WaitingToLock': return 'lock-action--blocked'
-    case 'ParkingToWaitFor': return 'lock-action--parking'
-    case 'WaitingOn': return 'lock-action--waiting'
-    default: return ''
-  }
-}
-
 function getStateBadgeClass(state: ThreadState | null): string {
   if (!state) return ''
   const map: Record<string, string> = {
@@ -401,8 +398,53 @@ function getStateBadgeClass(state: ThreadState | null): string {
       </div>
     </div>
 
+    <!-- ═══════ View Switch ═══════ -->
+    <div class="view-switch">
+      <button class="view-switch__btn" :class="{ 'view-switch__btn--active': viewMode === 'graph' }" @click="viewMode = 'graph'">
+        关系图
+      </button>
+      <button class="view-switch__btn" :class="{ 'view-switch__btn--active': viewMode === 'list' }" @click="viewMode = 'list'">
+        锁列表
+      </button>
+    </div>
+
+    <LockGraphView
+      v-if="viewMode === 'graph'"
+      @open-thread="navigateToThread"
+      @open-lock="showLockInList"
+    />
+
     <!-- ═══════ Lock Contention Panel ═══════ -->
-    <div class="panel animate-card-enter">
+    <div v-else class="panel animate-card-enter">
+      <div v-if="focusedLock" class="focused-lock">
+        <div class="focused-lock__title">锁详情</div>
+        <p class="focused-lock__note">锁当前没有等待者，不会出现在下面的竞争列表里。</p>
+        <div class="lock-meta-grid">
+          <div class="meta-item">
+            <span class="meta-label">Address</span>
+            <span class="meta-value mono">{{ focusedLock.lockAddress }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Class</span>
+            <span class="meta-value mono">{{ focusedLock.lockClassName }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Holder</span>
+            <span
+              v-if="focusedLock.holderThreadName"
+              class="meta-value mono holder-link"
+              @click="openHolder(focusedLock)"
+            >{{ focusedLock.holderThreadName }}</span>
+            <span v-else class="meta-value">未记录持有者</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Waiters</span>
+            <span class="meta-value mono">{{ focusedLock.waitingThreadNames.length }}</span>
+          </div>
+        </div>
+      </div>
+      <div v-else-if="focusNote" class="focused-lock focused-lock--missing">{{ focusNote }}</div>
+
       <div class="panel-header">
         <div class="panel-title-group">
           <svg class="panel-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -466,7 +508,7 @@ function getStateBadgeClass(state: ThreadState | null): string {
               <span
                 v-if="lock.holderThreadName"
                 class="holder-name holder-link"
-                @click.stop="navigateToThread(lock.holderThreadName!)"
+                @click.stop="openHolder(lock)"
                 :title="'Click to view thread: ' + lock.holderThreadName"
               >{{ lock.holderThreadName }}</span>
               <span v-else class="holder-na">N/A</span>
@@ -522,7 +564,7 @@ function getStateBadgeClass(state: ThreadState | null): string {
                     <span
                       v-if="lock.holderThreadName"
                       class="meta-value mono meta-value--holder holder-link"
-                      @click.stop="navigateToThread(lock.holderThreadName!)"
+                      @click.stop="openHolder(lock)"
                       :title="'Click to view thread: ' + lock.holderThreadName"
                     >
                       {{ lock.holderThreadName }}
@@ -633,38 +675,12 @@ function getStateBadgeClass(state: ThreadState | null): string {
                       </div>
 
                       <div v-if="threadCache[tName].stackTrace?.length" class="stack-trace">
-                        <div class="stack-header">Stack Trace ({{ threadCache[tName].stackTrace.length }} frames)</div>
-
-                        <template v-for="(frame, fIdx) in threadCache[tName].stackTrace" :key="fIdx">
-                          <div
-                            class="stack-frame mono"
-                            :class="{ 'stack-frame--jdk': frame.className.startsWith('java.') || frame.className.startsWith('sun.') || frame.className.startsWith('jdk.') }"
-                          >
-                            <span class="frame-at">at </span>
-                            <span class="frame-class">{{ frame.className }}</span>.<span class="frame-method">{{ frame.methodName }}</span>(<span class="frame-source">{{ frame.source }}</span>)
-                          </div>
-
-                          <div
-                            v-for="(la, laIdx) in getLockActionsForFrame(threadCache[tName], fIdx)"
-                            :key="'lock-' + fIdx + '-' + laIdx"
-                            class="lock-action mono"
-                            :class="[getLockActionCssClass(la), { 'lock-action--contention': getLockContentionInfo(la)?.waitingThreadNames?.length }]"
-                          >
-                            <span class="lock-type">{{ getLockActionLabel(la) }}</span>
-                            &lt;<span class="lock-addr">{{ la.lockAddress }}</span>&gt;
-                            (a {{ la.lockClassName }})
-                            <template v-if="getLockContentionInfo(la)?.waitingThreadNames?.length">
-                              <span class="lock-contention-badge">
-                                <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                                  <path d="M8 1.5L14.5 13H1.5L8 1.5Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
-                                  <path d="M8 6v3.5M8 11h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-                                </svg>
-                                {{ getLockTypeTag(la.lockClassName) }}
-                                · 阻塞 {{ getLockContentionInfo(la)!.waitingThreadNames.length }} 个线程
-                              </span>
-                            </template>
-                          </div>
-                        </template>
+                        <StackTraceView
+                          :frames="threadCache[tName].stackTrace"
+                          :lock-actions="threadCache[tName].lockActions"
+                          :lock-map="lockMap"
+                          @navigate-lock="expandAndScrollTo"
+                        />
                       </div>
 
                       <div v-if="threadCache[tName].ownableSynchronizers?.length" class="ownable-sync">
@@ -725,6 +741,57 @@ function getStateBadgeClass(state: ThreadState | null): string {
   display: flex;
   flex-direction: column;
   gap: var(--ts-space-lg);
+}
+
+.focused-lock {
+  padding: var(--ts-space-md) var(--ts-space-lg);
+  background: #f8fbff;
+  border-bottom: 1px solid #dbeafe;
+}
+
+.focused-lock--missing {
+  color: var(--ts-danger);
+  font-size: var(--ts-font-size-sm);
+}
+
+.focused-lock__title {
+  font-size: var(--ts-font-size-sm);
+  font-weight: 650;
+  color: var(--ts-text-primary);
+}
+
+.focused-lock__note {
+  margin: 4px 0 var(--ts-space-sm);
+  font-size: var(--ts-font-size-xs);
+  color: var(--ts-text-secondary);
+}
+
+.view-switch {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 3px;
+  background: var(--ts-bg-elevated);
+  border-radius: var(--ts-radius-md);
+}
+
+.view-switch__btn {
+  padding: 5px 16px;
+  border: none;
+  border-radius: var(--ts-radius-sm);
+  background: transparent;
+  color: var(--ts-text-secondary);
+  font-size: var(--ts-font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--ts-transition);
+}
+
+.view-switch__btn--active {
+  background: #fff;
+  color: var(--ts-text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 /* ═══════════════════════════════════════════
@@ -1301,91 +1368,13 @@ function getStateBadgeClass(state: ThreadState | null): string {
 
 .stack-trace {
   margin-top: var(--ts-space-sm);
-}
-
-.stack-header {
-  font-size: var(--ts-font-size-xs);
-  color: var(--ts-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: var(--ts-space-xs);
-  font-weight: 500;
-}
-
-.stack-frame {
-  font-size: 12px;
-  padding: 2px 0;
-  color: var(--ts-text-primary);
-  line-height: 1.6;
-}
-
-.stack-frame--jdk {
-  color: var(--ts-text-muted);
-}
-
-.frame-at { color: var(--ts-text-muted); }
-.frame-class { color: var(--ts-text-secondary); }
-.frame-method { color: var(--ts-accent); font-weight: 500; }
-.frame-source { color: var(--ts-success); }
-
-.lock-action {
-  font-size: 12px;
-  padding: 3px 8px 3px 20px;
-  margin: 1px 0;
-  color: var(--ts-text-secondary);
-  line-height: 1.7;
-  border-radius: var(--ts-radius-sm);
+  border: var(--ts-border);
+  border-radius: var(--ts-radius-md);
+  overflow: hidden;
+  max-height: 480px;
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
 }
-
-.lock-type { font-weight: 500; }
-
-.lock-action--held .lock-type { color: #16a34a; }
-.lock-action--blocked .lock-type { color: #dc2626; }
-.lock-action--parking .lock-type { color: #d97706; }
-.lock-action--waiting .lock-type { color: #d97706; }
-
-.lock-addr {
-  color: var(--ts-accent);
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 2px;
-}
-
-.lock-contention-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 8px;
-  margin-left: 6px;
-  border-radius: var(--ts-radius-full);
-  background: #fef2f2;
-  color: #dc2626;
-  border: 1px solid #fecaca;
-  white-space: nowrap;
-  font-family: var(--ts-font-ui);
-  letter-spacing: 0.2px;
-  line-height: 1.5;
-}
-
-.lock-contention-badge svg {
-  flex-shrink: 0;
-}
-
-.lock-action--contention.lock-action--held {
-  background: #fefce8;
-  border-left-color: #dc2626;
-  border-left-width: 3px;
-}
-
-.lock-action--held { border-left: 2px solid #16a34a; }
-.lock-action--blocked { border-left: 2px solid #dc2626; background: #fef2f2; }
-.lock-action--parking { border-left: 2px solid #d97706; }
-.lock-action--waiting { border-left: 2px solid #d97706; }
 
 .ownable-sync {
   margin-top: var(--ts-space-sm);

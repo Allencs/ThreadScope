@@ -6,9 +6,12 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
+import { useSettingsStore } from '@/stores/settingsStore'
+import CodeSettingsModal from '@/components/settings/CodeSettingsModal.vue'
 
 const router = useRouter()
 const store = useAnalysisStore()
+const settings = useSettingsStore()
 
 /** 与后端 multipart 上限、nginx client_max_body_size 保持一致 */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -119,7 +122,7 @@ async function handlePaste() {
           ref="fileInput"
           type="file"
           multiple
-          accept=".txt,.log,.tdump,.dump,.out"
+          accept=".txt,.log,.tdump,.dump,.out,.json"
           style="display: none"
           @change="handleFileSelect"
         />
@@ -137,15 +140,25 @@ async function handlePaste() {
             </svg>
           </div>
           <p class="drop-title">Drop Thread Dump File(s) Here</p>
-          <p class="drop-hint">or click to browse &middot; .txt .log .tdump .dump</p>
+          <p class="drop-hint">or click to browse &middot; jstack / jcmd Thread.print / jcmd Thread.dump_to_file (.json)</p>
           <p class="drop-hint">
             Drop multiple dumps taken seconds apart to unlock trend &amp; stuck-thread comparison
+          </p>
+          <p class="drop-hint">
+            虚拟线程 (JDK 21+)：jcmd &lt;pid&gt; Thread.dump_to_file -format=json threads.json
           </p>
         </div>
       </div>
 
       <!-- Alternative actions -->
       <div class="alt-actions animate-card-enter">
+        <label class="profile-select" title="上传时使用该应用的业务包前缀配置">
+          应用
+          <select v-model="settings.activeProfileId">
+            <option v-for="p in settings.profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
+        </label>
+        <button class="alt-btn" @click="settings.settingsOpen = true">代码归属设置</button>
         <button class="alt-btn" @click="showPasteModal = true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
@@ -183,6 +196,8 @@ async function handlePaste() {
         </div>
       </div>
     </Teleport>
+
+    <CodeSettingsModal />
   </div>
 </template>
 
@@ -303,7 +318,27 @@ async function handlePaste() {
 
 .alt-actions {
   display: flex;
+  align-items: center;
   gap: var(--ts-space-md);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.profile-select {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-space-sm);
+  font-size: var(--ts-font-size-sm);
+  color: var(--ts-text-secondary);
+}
+
+.profile-select select {
+  padding: 6px 10px;
+  border: var(--ts-border);
+  border-radius: var(--ts-radius-md);
+  background: var(--ts-bg-surface);
+  color: var(--ts-text-primary);
+  font-size: var(--ts-font-size-sm);
 }
 
 .alt-btn {

@@ -42,8 +42,9 @@ function toggleStuck(name: string) {
   expandedStuck.value = s
 }
 
-function openThread(threadName: string) {
-  store.openThreadDetailTab(threadName)
+/** 跨快照对比后的线程标识在同一 JVM 内稳定，按标识打开当前快照中的同一线程 */
+function openThread(threadKey: string, threadName: string) {
+  store.openThreadDetailTab(threadKey, threadName)
   router.push({ name: 'threads', params: { analysisId: route.params.analysisId } })
 }
 
@@ -74,6 +75,13 @@ function stuckHint(t: StuckThread): string {
     <div v-if="loading" class="empty-state">Loading comparison...</div>
 
     <template v-else-if="comparison">
+      <div v-if="comparison.jvmRestartSuspected" class="error-banner">
+        <span>
+          几份 dump 之间 JVM 疑似重启过 (同名线程的存活时间变短)，跨快照配对不可靠，栈不动检测与 CPU 差值已停用。
+          请确认上传的 dump 来自同一个进程。
+        </span>
+      </div>
+
       <!-- ── 快照摘要 ── -->
       <section class="panel">
         <h3 class="section-title">Snapshots</h3>
@@ -110,18 +118,18 @@ function stuckHint(t: StuckThread): string {
           No stuck threads detected. 🎉
         </div>
         <div v-else class="stuck-list">
-          <div v-for="t in comparison.stuckThreads" :key="t.threadName" class="stuck-card">
-            <div class="stuck-header" @click="toggleStuck(t.threadName)">
-              <span class="expand-icon">{{ expandedStuck.has(t.threadName) ? '▼' : '▶' }}</span>
+          <div v-for="t in comparison.stuckThreads" :key="t.threadKey" class="stuck-card">
+            <div class="stuck-header" @click="toggleStuck(t.threadKey)">
+              <span class="expand-icon">{{ expandedStuck.has(t.threadKey) ? '▼' : '▶' }}</span>
               <span
                 class="state-badge mono"
                 :style="{ background: STATE_COLORS[t.state] + '20', color: STATE_COLORS[t.state] }"
               >{{ t.state }}</span>
-              <span class="stuck-name mono" @click.stop="openThread(t.threadName)">{{ t.threadName }}</span>
+              <span class="stuck-name mono" @click.stop="openThread(t.threadKey, t.threadName)">{{ t.threadName }}</span>
               <span class="stuck-hint">{{ stuckHint(t) }}</span>
               <span class="stuck-top mono">{{ t.topMethod }}</span>
             </div>
-            <div v-if="expandedStuck.has(t.threadName)" class="stuck-frames">
+            <div v-if="expandedStuck.has(t.threadKey)" class="stuck-frames">
               <div v-for="(frame, i) in t.topFrames" :key="i" class="mono frame-line">at {{ frame }}</div>
             </div>
           </div>
@@ -144,8 +152,8 @@ function stuckHint(t: StuckThread): string {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="t in comparison.topCpuThreads" :key="t.threadName">
-              <td class="mono clickable" @click="openThread(t.threadName)">{{ t.threadName }}</td>
+            <tr v-for="t in comparison.topCpuThreads" :key="t.threadKey">
+              <td class="mono clickable" @click="openThread(t.threadKey, t.threadName)">{{ t.threadName }}</td>
               <td class="mono cpu-delta">{{ fmtCpu(t.cpuMsDelta) }}</td>
               <td class="mono text-muted">{{ fmtCpu(t.firstCpuMs) }}</td>
               <td class="mono text-muted">{{ fmtCpu(t.lastCpuMs) }}</td>

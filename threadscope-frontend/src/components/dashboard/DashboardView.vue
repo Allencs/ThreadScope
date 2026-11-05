@@ -108,11 +108,11 @@ const daemonEntries = computed(() => {
   ]
 })
 
-// ── Blocked risks ──
-const BLOCKED_RISK_CATEGORIES = new Set(['BLOCK_STORM', 'DEADLOCK', 'HIGH_BLOCKED_RATIO', 'BLOCKED_THREADS'])
+// ── Diagnosis risks (按严重程度排序，全部诊断结论都要可见) ──
+const LEVEL_ORDER: Record<string, number> = { CRITICAL: 0, WARNING: 1, INFO: 2, HEALTHY: 3 }
 const blockedRisks = computed(() => {
   const risks = store.overview?.healthReport?.risks ?? []
-  return risks.filter(r => BLOCKED_RISK_CATEGORIES.has(r.category))
+  return [...risks].sort((a, b) => (LEVEL_ORDER[a.level] ?? 9) - (LEVEL_ORDER[b.level] ?? 9))
 })
 const activeRiskIdx = ref<number | null>(null)
 const activeRisk = computed(() => activeRiskIdx.value !== null ? blockedRisks.value[activeRiskIdx.value] : null)
@@ -266,8 +266,25 @@ function navigateToLock(lockAddr: string) {
   router.push({ name: 'locks', params: { analysisId: route.params.analysisId } })
 }
 
-function navigateToThread(threadName: string) {
-  store.openThreadDetailTab(threadName)
+function navigateToThread(threadRef: string, label?: string) {
+  store.openThreadDetailTab(threadRef, label)
+  router.push({ name: 'threads', params: { analysisId: route.params.analysisId } })
+}
+
+// ── Data quality ──
+const dataQuality = computed(() => store.overview?.dataQuality ?? [])
+const qualityExpanded = ref(false)
+const qualityWarnings = computed(() => dataQuality.value.filter(q => q.level === 'WARNING').length)
+
+// ── Virtual threads ──
+const virtualReport = computed(() => {
+  const vt = store.overview?.virtualThreads
+  return vt && (vt.virtualCount > 0 || vt.mountedCount > 0 || vt.pinnedCount > 0) ? vt : null
+})
+
+function filterVirtualThreads() {
+  store.kindFilter = ['VIRTUAL', 'CARRIER']
+  store.switchToThreadList()
   router.push({ name: 'threads', params: { analysisId: route.params.analysisId } })
 }
 
@@ -293,6 +310,29 @@ const tabs = [
 
 <template>
   <div class="dashboard">
+
+    <!-- ═══════ 数据质量提示：结论的可信边界 ═══════ -->
+    <div
+      v-if="dataQuality.length"
+      class="quality-banner"
+      :class="{ 'quality-banner--warning': qualityWarnings > 0 }"
+    >
+      <div class="quality-banner__head" @click="qualityExpanded = !qualityExpanded">
+        <span class="quality-banner__icon">{{ qualityWarnings > 0 ? '⚠' : 'ℹ' }}</span>
+        <span class="quality-banner__title">
+          数据质量提示 {{ dataQuality.length }} 项<template v-if="qualityWarnings"> · {{ qualityWarnings }} 项会影响结论准确性</template>
+        </span>
+        <span class="quality-banner__preview">{{ dataQuality.map(q => q.title).join('；') }}</span>
+        <span class="quality-banner__toggle">{{ qualityExpanded ? '收起' : '展开' }}</span>
+      </div>
+      <div v-if="qualityExpanded" class="quality-list">
+        <div v-for="q in dataQuality" :key="q.code" class="quality-item" :class="'quality-item--' + q.level.toLowerCase()">
+          <div class="quality-item__title">{{ q.title }}</div>
+          <div class="quality-item__row"><b>影响</b>{{ q.impact }}</div>
+          <div class="quality-item__row"><b>建议</b><span class="mono-inline">{{ q.suggestion }}</span></div>
+        </div>
+      </div>
+    </div>
 
     <!-- ═══════════════════════════════════════
          Row 1: 分析概况
@@ -422,6 +462,64 @@ const tabs = [
       </div>
     </div>
 
+    <!-- ═══════ 虚拟线程 ═══════ -->
+    <div v-if="virtualReport" class="vt-panel" :class="{ 'vt-panel--alert': virtualReport.pinnedCount > 0 }">
+      <div class="vt-header">
+        <h3 class="section-title section-title--inline">虚拟线程</h3>
+        <span class="vt-visibility" :title="virtualReport.visibility === 'FULL' ? '来自 jcmd Thread.dump_to_file，包含全部虚拟线程' : 'jstack 只能看到正在挂载的虚拟线程'">
+          {{ virtualReport.visibility === 'FULL' ? '完整视图 (jcmd)' : '仅挂载中 (jstack)' }}
+        </span>
+        <span v-if="virtualReport.jvmMajorVersion" class="vt-visibility mono">JDK {{ virtualReport.jvmMajorVersion }}</span>
+        <span class="toolbar-spacer"></span>
+        <button class="tab-btn" @click="filterVirtualThreads">在线程列表中查看 →</button>
+      </div>
+      <div class="vt-metrics">
+        <div class="vt-metric">
+          <span class="metric-value mono">{{ virtualReport.virtualCount }}</span>
+          <span class="metric-label">虚拟线程</span>
+        </div>
+        <div class="vt-metric">
+          <span class="metric-value mono">{{ virtualReport.mountedCount }}<small> / {{ virtualReport.carrierCount }}</small></span>
+          <span class="metric-label">挂载中 / 载体线程</span>
+        </div>
+        <div class="vt-metric" :class="{ 'vt-metric--alert': virtualReport.pinnedCount > 0 }">
+          <span class="metric-value mono">{{ virtualReport.pinnedCount }}</span>
+          <span class="metric-label">Pinned (钉住载体)</span>
+        </div>
+        <div v-if="Object.keys(virtualReport.virtualStates).length" class="vt-states">
+          <span
+            v-for="(count, state) in virtualReport.virtualStates"
+            :key="state"
+            class="vt-state mono"
+            :style="{ color: STATE_COLORS[state as ThreadState], background: STATE_COLORS[state as ThreadState] + '14' }"
+          >{{ STATE_LABELS[state as ThreadState] }} {{ count }}</span>
+        </div>
+      </div>
+
+      <div v-if="virtualReport.pinned.length" class="vt-pinned">
+        <div class="vt-subtitle">被钉住的线程</div>
+        <div
+          v-for="p in virtualReport.pinned.slice(0, 8)"
+          :key="p.threadKey"
+          class="vt-pinned-row"
+          @click="navigateToThread(p.threadKey, p.threadName)"
+        >
+          <span class="mono vt-pinned-name">{{ p.threadName }}</span>
+          <span class="vt-pinned-reason">{{ p.reason }}</span>
+          <span v-if="p.blockingFrame" class="mono vt-pinned-frame">{{ p.blockingFrame }}</span>
+        </div>
+        <div v-if="virtualReport.pinned.length > 8" class="vt-more">还有 {{ virtualReport.pinned.length - 8 }} 个…</div>
+      </div>
+
+      <div v-if="virtualReport.containers.length" class="vt-containers">
+        <div class="vt-subtitle">按线程容器分布</div>
+        <div v-for="c in virtualReport.containers.slice(0, 6)" :key="c.container" class="vt-container-row">
+          <span class="mono vt-container-name" :title="c.container">{{ c.container }}</span>
+          <span class="mono">{{ c.count }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══════════════════════════════════════
          Row 2: TOP 10 列表 (中间位置)
          ═══════════════════════════════════════ -->
@@ -457,9 +555,9 @@ const tabs = [
         </div>
         <div
           v-for="(t, i) in topThreads"
-          :key="t.name"
+          :key="t.key"
           class="table-row table-row--clickable"
-          @click="navigateToThread(t.name)"
+          @click="navigateToThread(t.key, t.name)"
         >
           <span class="col col--name">
             <span class="row-rank mono">{{ i + 1 }}</span>
@@ -637,7 +735,7 @@ const tabs = [
          ═══════════════════════════════════════ -->
     <div v-if="blockedRisks.length > 0" class="blocked-panel" :class="healthClass">
       <div class="blocked-header">
-        <h3 class="section-title section-title--inline">Blocked Thread Risks</h3>
+        <h3 class="section-title section-title--inline">诊断风险 <span class="risk-count mono">{{ blockedRisks.length }}</span></h3>
         <span class="health-badge" :class="healthClass">
           {{ store.overview?.healthReport?.overallLevel ?? 'HEALTHY' }}
         </span>
@@ -764,6 +862,128 @@ function detectPool(threadName: string): string {
    DashboardView — Overview v4
    Layout: Overview → TOP 10 → Blocked Risks
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* ── Data quality ── */
+.quality-banner {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  border-radius: var(--ts-radius-lg);
+  font-size: var(--ts-font-size-sm);
+  color: #1e3a8a;
+  overflow: hidden;
+}
+.quality-banner--warning { border-color: #fcd34d; background: #fffbeb; color: #78350f; }
+.quality-banner__head {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-space-sm);
+  padding: 10px var(--ts-space-md);
+  cursor: pointer;
+}
+.quality-banner__icon { font-size: 14px; }
+.quality-banner__title { font-weight: 600; white-space: nowrap; }
+.quality-banner__preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+.quality-banner__toggle { font-weight: 600; white-space: nowrap; }
+.quality-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-space-sm);
+  padding: 0 var(--ts-space-md) var(--ts-space-md);
+}
+.quality-item {
+  background: #fff;
+  border-radius: var(--ts-radius-md);
+  border-left: 3px solid #60a5fa;
+  padding: 8px 12px;
+  color: var(--ts-text-secondary);
+}
+.quality-item--warning { border-left-color: #f59e0b; }
+.quality-item__title { font-weight: 600; color: var(--ts-text-primary); margin-bottom: 2px; }
+.quality-item__row { line-height: 1.7; font-size: var(--ts-font-size-xs); }
+.quality-item__row b { color: var(--ts-text-muted); font-weight: 600; margin-right: 8px; }
+.mono-inline { font-family: var(--ts-font-display); font-size: 11px; word-break: break-all; }
+
+/* ── Virtual threads ── */
+.vt-panel {
+  background: var(--ts-bg-surface);
+  border: var(--ts-border);
+  border-radius: var(--ts-radius-lg);
+  box-shadow: var(--ts-shadow-sm);
+  padding: var(--ts-space-md) var(--ts-space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-space-md);
+}
+.vt-panel--alert { border-color: #fecaca; }
+.vt-header { display: flex; align-items: center; gap: var(--ts-space-sm); }
+.toolbar-spacer { flex: 1; }
+.vt-visibility {
+  font-size: var(--ts-font-size-xs);
+  padding: 1px 8px;
+  border-radius: var(--ts-radius-full);
+  background: #f5f3ff;
+  color: #7c3aed;
+  cursor: help;
+}
+.vt-metrics { display: flex; gap: var(--ts-space-md); align-items: center; flex-wrap: wrap; }
+.vt-metric {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 16px;
+  border-radius: var(--ts-radius-md);
+  background: var(--ts-bg-inset);
+  min-width: 120px;
+}
+.vt-metric small { font-size: 12px; color: var(--ts-text-muted); }
+.vt-metric--alert { background: var(--ts-danger-light); }
+.vt-metric--alert .metric-value { color: var(--ts-danger); }
+.vt-states { display: flex; gap: 6px; flex-wrap: wrap; }
+.vt-state { font-size: 11px; padding: 2px 8px; border-radius: var(--ts-radius-full); }
+.vt-subtitle {
+  font-size: var(--ts-font-size-xs);
+  font-weight: 600;
+  color: var(--ts-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.vt-pinned-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) 1fr;
+  gap: 2px 12px;
+  padding: 6px 10px;
+  border-radius: var(--ts-radius-sm);
+  cursor: pointer;
+  font-size: var(--ts-font-size-xs);
+}
+.vt-pinned-row:hover { background: var(--ts-bg-hover); }
+.vt-pinned-name { font-weight: 600; color: var(--ts-danger); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vt-pinned-reason { color: var(--ts-text-secondary); }
+.vt-pinned-frame { grid-column: 2; color: var(--ts-text-muted); font-size: 11px; }
+.vt-more { font-size: var(--ts-font-size-xs); color: var(--ts-text-muted); padding-left: 10px; }
+.vt-container-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--ts-font-size-xs);
+  padding: 2px 10px;
+  color: var(--ts-text-secondary);
+}
+.vt-container-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.risk-count {
+  font-size: var(--ts-font-size-xs);
+  font-weight: 600;
+  color: var(--ts-text-muted);
+  margin-left: 4px;
+}
 
 .dashboard {
   display: flex;

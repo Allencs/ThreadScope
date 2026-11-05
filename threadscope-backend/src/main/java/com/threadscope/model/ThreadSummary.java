@@ -7,6 +7,8 @@ package com.threadscope.model;
  */
 public record ThreadSummary(
     String name,
+    String key,
+    ThreadKind kind,
     ThreadState state,
     boolean daemon,
     int stackDepth,
@@ -15,6 +17,8 @@ public record ThreadSummary(
     public static ThreadSummary from(ThreadInfo info) {
         return new ThreadSummary(
             info.name(),
+            info.key(),
+            info.kind(),
             info.state(),
             info.daemon(),
             info.stackTrace() != null ? info.stackTrace().size() : 0,

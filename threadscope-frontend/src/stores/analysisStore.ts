@@ -9,10 +9,19 @@ import type {
   StackAggregateGroup,
   MethodHotspot,
   ThreadState,
+  ThreadKind,
 } from '@/types'
 import * as api from '@/api/threadscope'
+import { useSettingsStore } from './settingsStore'
+
+export interface ThreadTab {
+  ref: string
+  label: string
+}
 
 export const useAnalysisStore = defineStore('analysis', () => {
+  const settings = useSettingsStore()
+
   // ── Core State ──
   const analysisId = ref<string | null>(null)
   const fileName = ref('')
@@ -34,6 +43,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const activeModule = ref<string>('dashboard')
   const searchQuery = ref('')
   const stateFilter = ref<ThreadState[]>([])
+  const kindFilter = ref<ThreadKind[]>([])
   const sortBy = ref<string>('default')
   const highlightLockAddress = ref<string | null>(null)
 
@@ -46,7 +56,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const expandedPools = ref<string[]>([])
 
   function poolCacheStorageKey(id: string): string {
-    return `ts:poolCache:${id}`
+    return `ts:poolCache:v2:${id}`
   }
 
   function persistPoolCache() {
@@ -140,24 +150,30 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
 
   // ── Thread Detail Tabs ──
-  const threadDetailTabs = ref<string[]>([])
+  // ref 为线程标识 (key) 或线程名 — 能拿到 key 时优先传 key，线程名可能重名
+  const threadDetailTabs = ref<ThreadTab[]>([])
   const activeThreadTab = ref<string | null>(null)
 
-  function openThreadDetailTab(threadName: string) {
-    if (!threadDetailTabs.value.includes(threadName)) {
-      threadDetailTabs.value.push(threadName)
+  function openThreadDetailTab(threadRef: string, label?: string) {
+    if (!threadDetailTabs.value.some(t => t.ref === threadRef)) {
+      threadDetailTabs.value.push({ ref: threadRef, label: label ?? threadRef })
     }
-    activeThreadTab.value = threadName
+    activeThreadTab.value = threadRef
   }
 
-  function closeThreadDetailTab(threadName: string) {
-    const idx = threadDetailTabs.value.indexOf(threadName)
+  function closeThreadDetailTab(threadRef: string) {
+    const idx = threadDetailTabs.value.findIndex(t => t.ref === threadRef)
     if (idx >= 0) {
       threadDetailTabs.value.splice(idx, 1)
     }
-    if (activeThreadTab.value === threadName) {
+    if (activeThreadTab.value === threadRef) {
       activeThreadTab.value = null
     }
+  }
+
+  function renameThreadDetailTab(threadRef: string, label: string) {
+    const tab = threadDetailTabs.value.find(t => t.ref === threadRef)
+    if (tab) tab.label = label
   }
 
   function switchToThreadList() {
@@ -169,6 +185,14 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const healthLevel = computed(() => overview.value?.healthReport?.overallLevel ?? 'HEALTHY')
 
   // ── Actions ──
+  function uploadOptions() {
+    const profile = settings.activeProfile
+    return {
+      businessPackages: profile.businessPackages,
+      applicationName: profile.name,
+    }
+  }
+
   async function uploadFile(files: File[]) {
     loading.value = true
     uploadProgress.value = 0
@@ -176,7 +200,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     try {
       const res = await api.uploadDump(files, (p) => {
         uploadProgress.value = p
-      })
+      }, uploadOptions())
       analysisId.value = res.analysisId
       fileName.value = res.fileName
       await loadOverview()
@@ -193,7 +217,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     loading.value = true
     error.value = null
     try {
-      const res = await api.pasteDump(content)
+      const res = await api.pasteDump(content, uploadOptions())
       analysisId.value = res.analysisId
       fileName.value = res.fileName
       await loadOverview()
@@ -212,12 +236,14 @@ export const useAnalysisStore = defineStore('analysis', () => {
     if (overview.value?.fileName) {
       fileName.value = overview.value.fileName
     }
+    settings.analysisBusinessPackages = overview.value?.businessPackages ?? []
   }
 
   async function loadThreads(page = 1, size = 50) {
     if (!analysisId.value) return
     const res = await api.fetchThreads(analysisId.value, {
       state: stateFilter.value.length > 0 ? stateFilter.value.join(',') : undefined,
+      kind: kindFilter.value.length > 0 ? kindFilter.value.join(',') : undefined,
       search: searchQuery.value || undefined,
       sort: sortBy.value !== 'default' ? sortBy.value : undefined,
       page,
@@ -276,6 +302,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     activeModule.value = 'dashboard'
     searchQuery.value = ''
     stateFilter.value = []
+    kindFilter.value = []
     sortBy.value = 'default'
     highlightLockAddress.value = null
     threadDetailTabs.value = []
@@ -287,9 +314,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     analysisId, fileName, loading, uploadProgress, error,
     overview, threads, threadTotal,
     locks, deadlocks, threadPools, stackAggregations, methodHotspots,
-    activeModule, searchQuery, stateFilter, sortBy, highlightLockAddress,
+    activeModule, searchQuery, stateFilter, kindFilter, sortBy, highlightLockAddress,
     threadDetailTabs, activeThreadTab,
-    openThreadDetailTab, closeThreadDetailTab, switchToThreadList,
+    openThreadDetailTab, closeThreadDetailTab, renameThreadDetailTab, switchToThreadList,
     // Pool cache
     threadPoolsLoaded, poolThreads, poolThreadsLoading, expandedPools,
     loadPoolThreads, togglePoolExpanded, clearPoolCache,

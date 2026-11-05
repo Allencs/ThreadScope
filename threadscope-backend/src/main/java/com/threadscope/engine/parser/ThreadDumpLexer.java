@@ -63,11 +63,15 @@ public class ThreadDumpLexer {
 
     /**
      * 词法分析结果
+     *
+     * @param hasLockedSynchronizers 是否出现过 "Locked ownable synchronizers" 段 —
+     *                               没有说明不是用 jstack -l 抓取的，JUC 锁持有者未知
      */
     public record LexerResult(
         String jvmVersion,
         List<RawThreadBlock> threadBlocks,
-        List<String> deadlockSection
+        List<String> deadlockSection,
+        boolean hasLockedSynchronizers
     ) {}
 
     /**
@@ -109,6 +113,7 @@ public class ThreadDumpLexer {
         List<String> currentOwnableSync = new ArrayList<>();
         boolean inDeadlockSection = false;
         boolean inSmrSection = false;
+        boolean sawLockedSynchronizers = false;
 
         String line;
         while ((line = reader.readLine()) != null) {
@@ -228,6 +233,7 @@ public class ThreadDumpLexer {
                 // Ownable Synchronizers 段头部
                 if (DumpPatterns.OWNABLE_SYNC_HEADER.matcher(line).find()) {
                     state = LexerState.OWNABLE_SYNC;
+                    sawLockedSynchronizers = true;
                     continue;
                 }
 
@@ -265,7 +271,7 @@ public class ThreadDumpLexer {
         // 处理最后一个线程块
         flushCurrentThread(threadBlocks, currentHeader, currentStateLine, currentBody, currentOwnableSync);
 
-        return new LexerResult(jvmVersion, threadBlocks, deadlockLines);
+        return new LexerResult(jvmVersion, threadBlocks, deadlockLines, sawLockedSynchronizers);
     }
 
     /**

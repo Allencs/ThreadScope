@@ -5,11 +5,34 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysisStore'
+import { useSettingsStore } from '@/stores/settingsStore'
+import CodeSettingsModal from '@/components/settings/CodeSettingsModal.vue'
+import type { SnapshotRef } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAnalysisStore()
+const settings = useSettingsStore()
 const sidebarCollapsed = ref(false)
+
+settings.loadCodeLayerConfig()
+
+const snapshots = computed<SnapshotRef[]>(() => store.overview?.snapshots ?? [])
+
+/** 切换快照 = 切换路由中的 analysisId，所有页面数据随之重新加载 */
+function switchSnapshot(snap: SnapshotRef) {
+  if (snap.analysisId === route.params.analysisId) return
+  router.push({ name: (route.name as string) ?? 'dashboard', params: { analysisId: snap.analysisId } })
+}
+
+function snapshotTitle(snap: SnapshotRef): string {
+  const parts = [`快照 #${snap.index + 1}${snap.latest ? ' (最新)' : ''}`]
+  if (snap.timestamp) parts.push(snap.timestamp)
+  parts.push(`${snap.totalThreads} 个线程`)
+  if (snap.deadlockCount) parts.push(`${snap.deadlockCount} 个死锁`)
+  if (snap.healthLevel) parts.push(`健康度 ${snap.healthLevel}`)
+  return parts.join(' · ')
+}
 
 const navItems = computed(() => {
   const items = [
@@ -78,7 +101,32 @@ function handleNewUpload() {
         </div>
       </div>
 
+      <div v-if="snapshots.length > 1" class="snapshot-switch">
+        <span class="snapshot-switch__label">快照</span>
+        <button
+          v-for="snap in snapshots"
+          :key="snap.analysisId"
+          class="snapshot-btn"
+          :class="{
+            'snapshot-btn--active': snap.analysisId === route.params.analysisId,
+            ['snapshot-btn--' + (snap.healthLevel ?? 'healthy').toLowerCase()]: true,
+          }"
+          :title="snapshotTitle(snap)"
+          @click="switchSnapshot(snap)"
+        >
+          <span class="snapshot-btn__dot"></span>
+          #{{ snap.index + 1 }}<template v-if="snap.latest"> 最新</template>
+          <span v-if="snap.timestamp" class="snapshot-btn__time mono">{{ snap.timestamp.slice(-8) }}</span>
+        </button>
+      </div>
+
       <div class="topbar-right">
+        <span v-if="settings.activeProfile" class="profile-pill" :title="'当前应用配置：' + settings.activeProfile.name">
+          {{ settings.activeProfile.name }}
+        </span>
+        <button class="topbar-btn" @click="settings.settingsOpen = true" title="配置业务包前缀与源码仓库">
+          代码归属
+        </button>
         <button class="topbar-btn" @click="handleNewUpload" title="Upload new dump">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -142,6 +190,18 @@ function handleNewUpload() {
                 <path d="M12 2c0 4-4 6-4 10a4 4 0 0 0 8 0c0-4-4-6-4-10Z" />
                 <path d="M12 18a2 2 0 0 1-2-2c0-1.5 2-3 2-3s2 1.5 2 3a2 2 0 0 1-2 2Z" fill="currentColor" stroke="none" />
               </template>
+              <!-- Flame graph — stacked bars -->
+              <template v-else-if="item.name === 'flame'">
+                <rect x="3" y="16" width="18" height="4" rx="1" />
+                <rect x="5" y="10" width="11" height="4" rx="1" />
+                <rect x="7" y="4" width="6" height="4" rx="1" />
+              </template>
+              <!-- Comparison — two columns -->
+              <template v-else-if="item.name === 'compare'">
+                <rect x="3" y="4" width="7" height="16" rx="1.5" />
+                <rect x="14" y="4" width="7" height="16" rx="1.5" />
+                <path d="M10 12h4" />
+              </template>
             </svg>
             <span v-if="!sidebarCollapsed" class="nav-label">{{ item.label }}</span>
           </div>
@@ -179,9 +239,14 @@ function handleNewUpload() {
         <span class="status-item">{{ store.overview?.parseTimeMs ?? 0 }}ms</span>
       </div>
       <div class="statusbar-right">
+        <span v-if="store.overview && store.overview.dumpFormat !== 'JSTACK'" class="status-item mono">
+          {{ store.overview.dumpFormat === 'JCMD_JSON' ? 'jcmd JSON' : 'jcmd text' }}
+        </span>
         <span v-if="store.overview?.jvmVersion" class="status-item mono">{{ store.overview.jvmVersion }}</span>
       </div>
     </footer>
+
+    <CodeSettingsModal />
   </div>
 </template>
 
@@ -222,7 +287,66 @@ function handleNewUpload() {
 .topbar-right {
   display: flex;
   align-items: center;
+  gap: var(--ts-space-sm);
 }
+
+.profile-pill {
+  font-size: var(--ts-font-size-xs);
+  color: var(--ts-text-muted);
+  padding: 2px 10px;
+  border-radius: var(--ts-radius-full);
+  background: var(--ts-bg-inset);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Snapshot switch ── */
+.snapshot-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  background: var(--ts-bg-elevated);
+  border-radius: var(--ts-radius-md);
+  overflow-x: auto;
+  max-width: 55vw;
+}
+
+.snapshot-switch__label {
+  font-size: var(--ts-font-size-xs);
+  color: var(--ts-text-muted);
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.snapshot-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--ts-radius-sm);
+  background: transparent;
+  color: var(--ts-text-secondary);
+  font-size: var(--ts-font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.snapshot-btn:hover { color: var(--ts-text-primary); }
+.snapshot-btn--active {
+  background: #fff;
+  color: var(--ts-text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.snapshot-btn__dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }
+.snapshot-btn--info .snapshot-btn__dot { background: #2563eb; }
+.snapshot-btn--warning .snapshot-btn__dot { background: #d97706; }
+.snapshot-btn--critical .snapshot-btn__dot { background: #dc2626; }
+.snapshot-btn__time { color: var(--ts-text-muted); font-size: 10px; }
 
 .topbar-brand {
   display: flex;

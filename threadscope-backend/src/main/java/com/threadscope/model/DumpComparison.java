@@ -11,13 +11,18 @@ import java.util.Map;
  *   - 栈完全不动的线程 → 真挂起/死循环/长事务
  *   - CPU 时间差值     → 真实 CPU 消耗 (单快照的 cpu= 累计值没有意义)
  *   - 线程数趋势       → 线程泄漏
+ *
+ * @param jvmRestartSuspected 几份 dump 之间 JVM 疑似重启过 (同一线程的存活时间变短) — 跨 dump 配对不可靠
+ * @param matchedThreads      首末 dump 之间成功配对的线程数
  */
 public record DumpComparison(
     int dumpCount,
     List<SnapshotSummary> snapshots,
     List<StuckThread> stuckThreads,
     List<CpuDelta> topCpuThreads,
-    List<ThreadTrend> threadTrends
+    List<ThreadTrend> threadTrends,
+    boolean jvmRestartSuspected,
+    int matchedThreads
 ) {
     /** 每个 dump 的摘要 */
     public record SnapshotSummary(
@@ -30,6 +35,7 @@ public record DumpComparison(
     /** 在所有 dump 中栈完全不动的线程 */
     public record StuckThread(
         String threadName,
+        String threadKey,
         ThreadState state,          // 最后一个 dump 中的状态
         int dumpsSeen,
         String topMethod,
@@ -39,6 +45,7 @@ public record DumpComparison(
     /** 首末 dump 之间的 CPU 时间增量 */
     public record CpuDelta(
         String threadName,
+        String threadKey,
         double cpuMsDelta,          // 首末差值 (ms)
         double firstCpuMs,
         double lastCpuMs,

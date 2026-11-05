@@ -10,6 +10,8 @@ import java.util.*;
  * 生产事故的典型形态是传递阻塞：
  *   50 个线程 blocked 在 L1 → L1 持有者 B 又 blocked 在 L2 → L2 持有者 C 在做慢 IO。
  * 用户需要的答案是"元凶是 C"，而不是三条互不关联的锁记录。
+ *
+ * 图节点使用线程标识 (key) 而非线程名 — 重名线程 (如自建池里的同名 worker) 不会被合并漏算。
  */
 public class BlockChainAnalyzer {
 
@@ -17,13 +19,15 @@ public class BlockChainAnalyzer {
      * 根阻塞线程 — 它本身没有在等 synchronized 锁，却直接或间接拖住了一批线程。
      *
      * @param rootThreadName  根阻塞线程名
+     * @param rootThreadKey   根阻塞线程标识
      * @param directBlocked   直接阻塞的线程数
      * @param totalBlocked    传递闭包内被拖住的线程总数
      * @param maxChainDepth   最长等待链深度
-     * @param blockedSamples  被拖住线程的样例
+     * @param blockedSamples  被拖住线程的样例 (线程名)
      */
     public record RootBlocker(
         String rootThreadName,
+        String rootThreadKey,
         int directBlocked,
         int totalBlocked,
         int maxChainDepth,
@@ -34,11 +38,12 @@ public class BlockChainAnalyzer {
      * 找出所有根阻塞线程，按拖住的线程总数降序。
      */
     public List<RootBlocker> findRootBlockers(List<ThreadInfo> threads) {
-        // lockAddr → holder
-        Map<String, String> lockHolders = new HashMap<>();
+        Map<String, String> nameByKey = new HashMap<>();
+        Map<String, String> lockHolders = new HashMap<>();   // lockAddr → holder key
         for (ThreadInfo t : threads) {
+            nameByKey.put(t.key(), t.name());
             for (String addr : t.heldLockAddresses()) {
-                lockHolders.put(addr, t.name());
+                lockHolders.put(addr, t.key());
             }
         }
 
@@ -48,8 +53,8 @@ public class BlockChainAnalyzer {
             String waitLock = t.blockingLockAddress();
             if (waitLock == null) continue;
             String holder = lockHolders.get(waitLock);
-            if (holder != null && !holder.equals(t.name())) {
-                waiterToHolder.put(t.name(), holder);
+            if (holder != null && !holder.equals(t.key())) {
+                waiterToHolder.put(t.key(), holder);
             }
         }
         if (waiterToHolder.isEmpty()) return List.of();
@@ -82,11 +87,12 @@ public class BlockChainAnalyzer {
             }
 
             roots.add(new RootBlocker(
+                nameByKey.getOrDefault(holder, holder),
                 holder,
                 holderToWaiters.get(holder).size(),
                 all.size(),
                 depth,
-                all.stream().limit(10).toList()
+                all.stream().limit(10).map(k -> nameByKey.getOrDefault(k, k)).toList()
             ));
         }
 

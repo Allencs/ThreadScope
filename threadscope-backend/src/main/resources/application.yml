@@ -32,6 +32,25 @@ threadscope:
   analysis:
     max-threads-per-dump: 50000
     parse-timeout-seconds: 30
-    # 缓存驱逐按"线程总数"加权：所有缓存条目的线程数之和不超过该值
+    # 缓存驱逐按"线程总数"加权：所有缓存条目的线程数之和不超过该值 (多快照上传按全部快照累计)
     cache-max-total-threads: 150000
     cache-expire-minutes: 60
+    # 默认业务包前缀 (上传时未指定则使用；为空时 JDK/已知框架之外的代码均视为业务代码)
+    business-packages: []
+    # 健康检查阈值 — 按应用规模调整 (如网关常驻上千线程属正常，可调高 thread-count-*)
+    health:
+      blocked-ratio-warning: 0.05
+      blocked-ratio-critical: 0.15
+      block-storm-threshold: 5
+      pool-exhaustion-ratio: 0.9
+      pool-min-threads: 5
+      thread-count-warning: 1000
+      thread-count-critical: 3000
+      non-daemon-warning: 200
+      deep-stack-frames: 500
+      io-bottleneck-threshold: 10
+      root-blocker-min: 5
+      root-blocker-critical: 20
+      churn-elapsed-seconds: 60
+      churn-min-count: 50
+      cpu-hotspot-min-threads: 3
