@@ -138,6 +138,18 @@ public class ThreadPoolDetector {
             + "Attach Listener|Sweeper thread|DestroyJavaVM)$", "JVM-Internal", CATEGORY_JVM)
     );
 
+    public record PoolName(String name, String type, String category) {}
+
+    /** 只按线程名匹配已知线程池命名规则，匹配不上返回 null。 */
+    public static PoolName classifyName(String threadName) {
+        if (threadName == null) return null;
+        for (PoolPattern pp : KNOWN_PATTERNS) {
+            Matcher m = pp.pattern().matcher(threadName);
+            if (m.matches()) return new PoolName(m.group(1), pp.poolType(), pp.category());
+        }
+        return null;
+    }
+
     /**
      * 检测并分组线程池。
      */
@@ -283,7 +295,7 @@ public class ThreadPoolDetector {
      * "my-worker-pool-3" → "my-worker-pool"
      * "thread-123" → "thread"
      */
-    private String extractPrefix(String name) {
+    public static String extractPrefix(String name) {
         String prefix = name.replaceAll("[\\-_#\\s]\\d+$", "");
         return prefix.equals(name) || prefix.isBlank() ? null : prefix;
     }

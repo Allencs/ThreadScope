@@ -37,6 +37,10 @@ public class AnalysisStorageService {
         cache.put(bundle.analysisId(), bundle);
     }
 
+    public void evict(String analysisId) {
+        if (analysisId != null) cache.invalidate(baseId(analysisId));
+    }
+
     /** 单快照结果的存储 (兼容旧调用方) */
     public void store(String analysisId, AnalysisResult result) {
         cache.put(analysisId, new AnalysisBundle(analysisId, List.of(result)));

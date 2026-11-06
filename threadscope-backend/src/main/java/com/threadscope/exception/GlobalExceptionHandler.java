@@ -1,5 +1,6 @@
 package com.threadscope.exception;
 
+import com.threadscope.jfr.JfrParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -37,6 +38,11 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleUploadTooLarge(MaxUploadSizeExceededException e) {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
             .body(new ErrorResponse("UPLOAD_TOO_LARGE", "Uploaded file exceeds the size limit"));
+    }
+
+    @ExceptionHandler(JfrParseException.class)
+    public ResponseEntity<ErrorResponse> handleJfr(JfrParseException e) {
+        return ResponseEntity.badRequest().body(new ErrorResponse("JFR_PARSE_FAILED", e.getMessage()));
     }
 
     @ExceptionHandler({IllegalArgumentException.class, MethodArgumentTypeMismatchException.class})

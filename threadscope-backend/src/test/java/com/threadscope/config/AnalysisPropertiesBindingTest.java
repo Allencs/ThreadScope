@@ -3,13 +3,16 @@ package com.threadscope.config;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(properties = {
     "threadscope.analysis.health.thread-count-warning=2500",
-    "threadscope.analysis.business-packages=com.acme,com.example"
+    "threadscope.analysis.business-packages=com.acme,com.example",
+    "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration"
 })
+@ActiveProfiles("test")
 class AnalysisPropertiesBindingTest {
 
     @Autowired

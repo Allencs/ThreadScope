@@ -17,12 +17,29 @@ const sidebarCollapsed = ref(false)
 
 settings.loadCodeLayerConfig()
 
+const jfrReportId = computed(() => {
+  const value = route.query.jfr
+  return typeof value === 'string' && value ? value : ''
+})
+
+function backToJfr() {
+  if (jfrReportId.value) router.push(`/jfr/${jfrReportId.value}`)
+}
+
+function keepJfr(query: Record<string, string> = {}) {
+  return jfrReportId.value ? { ...query, jfr: jfrReportId.value } : query
+}
+
 const snapshots = computed<SnapshotRef[]>(() => store.overview?.snapshots ?? [])
 
 /** 切换快照 = 切换路由中的 analysisId，所有页面数据随之重新加载 */
 function switchSnapshot(snap: SnapshotRef) {
   if (snap.analysisId === route.params.analysisId) return
-  router.push({ name: (route.name as string) ?? 'dashboard', params: { analysisId: snap.analysisId } })
+  router.push({
+    name: (route.name as string) ?? 'dashboard',
+    params: { analysisId: snap.analysisId },
+    query: keepJfr(),
+  })
 }
 
 function snapshotTitle(snap: SnapshotRef): string {
@@ -76,7 +93,7 @@ watch(
 
 function navigateTo(name: string) {
   const analysisId = route.params.analysisId as string
-  router.push({ name, params: { analysisId } })
+  router.push({ name, params: { analysisId }, query: keepJfr() })
 }
 
 function handleNewUpload() {
@@ -99,6 +116,9 @@ function handleNewUpload() {
           </svg>
           <span class="topbar-title">ThreadScope</span>
         </div>
+        <button v-if="jfrReportId" class="topbar-btn back-jfr" type="button" @click="backToJfr">
+          ← 返回 JFR 报告
+        </button>
       </div>
 
       <div v-if="snapshots.length > 1" class="snapshot-switch">
@@ -282,6 +302,14 @@ function handleNewUpload() {
 .topbar-left {
   display: flex;
   align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.topbar-btn.back-jfr {
+  color: var(--ts-accent);
+  background: var(--ts-accent-light);
+  border-color: transparent;
+  font-weight: 600;
 }
 
 .topbar-right {

@@ -4,10 +4,34 @@ services:
     container_name: threadscope-backend
     restart: unless-stopped
     environment:
-      # ExitOnOutOfMemoryError: OOM 时立即退出，由 restart 策略拉起，避免僵死
-      - JAVA_OPTS=-Xms512m -Xmx1024m -XX:+ExitOnOutOfMemoryError
+      # 分代 ZGC（JDK 21 必须显式加 ZGenerational；升级到 JDK 24+ 后去掉该参数）。
+      # 堆：解析一个 360MB 的 .jfr 时活跃对象约 500MB，GC 前峰值约 1.3GB；ZGC 不压缩指针，
+      #     同样数据比 G1 多占约 20%，1GB 堆实测出现 100ms 以上的 Allocation Stall，2GB 无 Stall。
+      # SoftMaxHeapSize：平时尽量控制在 1.5GB 内，留 512MB 给突发上传。
+      # Xms 较小：空闲 300s 后 ZGC 把多出来的堆还给系统。
+      # ExitOnOutOfMemoryError：OOM 时先写 heap dump 再退出，由 restart 策略拉起，避免僵死。
+      - >-
+        JAVA_OPTS=-XX:+UseZGC -XX:+ZGenerational
+        -Xms512m -Xmx2g -XX:SoftMaxHeapSize=1536m -XX:MaxMetaspaceSize=256m
+        -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/logs
+        -Xlog:gc:file=/logs/gc.log:time,uptime:filecount=5,filesize=10m
+      # 滚动日志写到挂载的仓库根目录 logs/
+      - THREADSCOPE_LOG_DIR=/logs
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/threadscope
+      - SPRING_DATASOURCE_USERNAME=threadscope
+      - SPRING_DATASOURCE_PASSWORD=threadscope
+    volumes:
+      - ./logs:/logs
     expose:
       - "8080"
+    # 实测 NMT committed 约 2.6GB：堆 2GB + ZGC 元数据约 240MB + 线程栈约 130MB + Metaspace/CodeCache 约 80MB
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
       interval: 15s
@@ -30,3 +54,24 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: threadscope-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: threadscope
+      POSTGRES_USER: threadscope
+      POSTGRES_PASSWORD: threadscope
+    ports:
+      - "5432:5432"
+    volumes:
+      - threadscope-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U threadscope -d threadscope"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  threadscope-pg:

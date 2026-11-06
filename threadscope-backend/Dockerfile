@@ -13,13 +13,15 @@ RUN gradle bootJar --no-daemon -x test
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-RUN addgroup -S app && adduser -S app -G app
+RUN addgroup -S app && adduser -S app -G app \
+    && apk add --no-cache su-exec
 
 COPY --from=builder /app/build/libs/*.jar app.jar
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 
-RUN chown -R app:app /app
-USER app
+RUN chmod 755 /docker-entrypoint.sh && chown -R app:app /app
 
 EXPOSE 8080
 
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS --enable-preview -jar app.jar"]
+# 保持 root，入口脚本创建日志目录并 chown 后再降权为 app
+ENTRYPOINT ["/docker-entrypoint.sh"]

@@ -7,10 +7,16 @@ spring:
   servlet:
     multipart:
       enabled: true
-      # 与 -Xmx512m 的堆上限对齐：50MB 文本解析后的对象图已接近堆容量
-      max-file-size: 50MB
-      max-request-size: 50MB
+      # JFR 单独放宽到 512MB；线程 Dump 文本仍在控制器里限制为 50MB
+      max-file-size: 512MB
+      max-request-size: 512MB
       file-size-threshold: 2KB
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/threadscope}
+    username: ${SPRING_DATASOURCE_USERNAME:threadscope}
+    password: ${SPRING_DATASOURCE_PASSWORD:threadscope}
+  flyway:
+    enabled: true
   jackson:
     serialization:
       write-dates-as-timestamps: false
@@ -26,9 +32,22 @@ management:
       show-details: never
 
 threadscope:
+  log:
+    # 滚动日志目录。本地 bootRun 由 Gradle 设为仓库根目录 logs/；
+    # 容器里由 THREADSCOPE_LOG_DIR=/logs 指向挂载卷。
+    dir: ${THREADSCOPE_LOG_DIR:../logs}
+  jfr:
+    max-upload-mb: 512
+    retention-days: 14
+    # 虚拟线程超过这个数量后按启动栈聚合，不再逐条返回
+    virtual-thread-detail-limit: 5000
+    history-buckets: 120
+    hotspot-limit: 50
+    # 同时解析的 JFR 个数。实测解析一个 360MB 的 .jfr 堆内活跃对象约 500MB，并发数决定堆的峰值
+    max-concurrent-parses: 1
   cors:
     # 仅本地开发需要跨域；生产经 nginx 同源代理
-    allowed-origins: http://localhost:5173
+    allowed-origins: http://localhost:5173,http://127.0.0.1:5173
   analysis:
     max-threads-per-dump: 50000
     parse-timeout-seconds: 30

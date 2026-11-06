@@ -2,6 +2,7 @@ package com.threadscope.controller;
 
 import com.threadscope.dto.*;
 import com.threadscope.engine.parser.DumpTextDecoder;
+import com.threadscope.exception.DumpTooLargeException;
 import com.threadscope.model.AnalysisBundle;
 import com.threadscope.model.AnalysisResult;
 import com.threadscope.service.AnalysisOrchestrator;
@@ -33,6 +34,7 @@ public class DumpUploadController {
 
     private static final Logger log = LoggerFactory.getLogger(DumpUploadController.class);
     private static final int MAX_BUSINESS_PACKAGES = 50;
+    private static final long MAX_DUMP_BYTES = 50L * 1024 * 1024;
 
     private final AnalysisOrchestrator orchestrator;
     private final AnalysisStorageService storageService;
@@ -61,6 +63,10 @@ public class DumpUploadController {
         List<MultipartFile> valid = files.stream().filter(f -> !f.isEmpty()).toList();
         if (valid.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file is empty");
+        }
+        long totalBytes = valid.stream().mapToLong(MultipartFile::getSize).sum();
+        if (totalBytes > MAX_DUMP_BYTES) {
+            throw new DumpTooLargeException("Thread dump upload exceeds the 50MB limit");
         }
 
         // 多文件按名字典序 = 抓取顺序 (jstack 输出常按时间命名)

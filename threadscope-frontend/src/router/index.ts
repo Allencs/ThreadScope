@@ -7,6 +7,16 @@ const routes = [
     component: () => import('@/components/upload/DropZone.vue'),
   },
   {
+    path: '/jfr',
+    name: 'jfr-history',
+    component: () => import('@/components/jfr/JfrHistoryView.vue'),
+  },
+  {
+    path: '/jfr/:reportId',
+    name: 'jfr-report',
+    component: () => import('@/components/jfr/JfrReportView.vue'),
+  },
+  {
     path: '/analysis/:analysisId',
     name: 'analysis',
     component: () => import('@/components/layout/AnalysisLayout.vue'),

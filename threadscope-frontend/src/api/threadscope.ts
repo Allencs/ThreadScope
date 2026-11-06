@@ -228,3 +228,250 @@ export async function correlateCpu(analysisId: string, topOutput: string): Promi
   )
   return data
 }
+
+export interface JfrReportSummary {
+  id: string
+  filename: string
+  recordingStartEpochMs: number | null
+  durationMillis: number
+  sampleCount: number
+  threadDumpCount: number
+  dumpAnalysisId: string | null
+  createdAtEpochMs: number
+  expiresAtEpochMs: number
+  jvmVersion: string | null
+}
+
+export interface JfrCaller {
+  methodKey: string
+  label: string
+  samples: number
+  parentPercent: number
+  matched: boolean
+  truncated: boolean
+  callers: JfrCaller[]
+  /** 汇总节点：其余调用者 / 栈被截断 / 到达栈底。真实调用者没有这个字段。 */
+  kind?: 'others' | 'truncated' | 'bottom'
+}
+
+export type JfrTreeBasis = 'self' | 'inclusive'
+
+export interface JfrHotspotRow {
+  methodKey: string
+  label: string
+  selfSamples: number
+  inclusiveSamples: number
+  selfPercent: number
+  inclusivePercent: number
+  matched: boolean
+  expand: boolean
+  basis: JfrTreeBasis
+  /** 按当前排序口径，每个时间桶的样本数，与 JfrCpuTimeline 的桶对齐 */
+  timeline: number[]
+  /** 估算的平均整机 CPU 占比（0~1），没有 CPU 数据时为 null */
+  machineCpu: number | null
+  callers: JfrCaller[]
+}
+
+export interface JfrHotspotList {
+  totalSamples: number
+  sort: 'self' | 'inclusive'
+  /** false 表示旧版报告，调用者树二层以下按方法名聚合。 */
+  exactPaths: boolean
+  /** 调用栈被 JFR stackdepth 截断的样本数，旧版报告为 null */
+  truncatedSamples: number | null
+  /** false 表示旧版报告的调用栈没有时间信息，不能按时间区间统计 */
+  rangeSupported: boolean
+  /** 本次统计的时间桶区间 [rangeFrom, rangeTo)；统计整份录制时为 null */
+  rangeFrom: number | null
+  rangeTo: number | null
+  methods: JfrHotspotRow[]
+}
+
+/** 热点时间桶区间 [from, to) */
+export interface JfrBucketRange {
+  from: number
+  to: number
+}
+
+/** jdk.ContainerConfiguration；quotaCores 为 null 表示没设 CPU quota，内存为 null 表示不限制 */
+export interface JfrContainerInfo {
+  type: string | null
+  quotaCores: number | null
+  effectiveCpuCount: number | null
+  cpuShares: number | null
+  memoryLimit: number | null
+  hostTotalMemory: number | null
+}
+
+export type JfrDeployment = 'container' | 'vm' | 'physical'
+
+/**
+ * jdk.CPULoad 按热点时间桶取平均，值是占操作系统全部逻辑核（容器里是节点）的比例（0~1），没有数据的桶为 null。
+ * limitCores 是 JVM 实际可用的核数（容器取配额）；throttled 是桶所在窗口内被 CFS 限流的周期比例。
+ */
+export interface JfrCpuTimeline {
+  startEpochMs: number
+  endEpochMs: number
+  bucketCount: number
+  hwThreads: number | null
+  cores: number | null
+  samples: number[]
+  jvmUser: (number | null)[]
+  jvmSystem: (number | null)[]
+  machineTotal: (number | null)[]
+  deployment: JfrDeployment | null
+  virtualization: string | null
+  container: JfrContainerInfo | null
+  limitCores: number | null
+  throttled: (number | null)[] | null
+}
+
+export interface JfrThreadRow {
+  javaThreadId: number
+  name: string | null
+  parentName: string | null
+  startEpochMs: number | null
+  endEpochMs: number | null
+  existedBefore: boolean
+  aliveAtEnd: boolean
+  allocatedBytes: number | null
+  recordedAllocatedBytes: number | null
+}
+
+export interface JfrVirtualGroup {
+  stack: string[]
+  count: number
+  pinned: number
+}
+
+export interface JfrVirtualThread {
+  javaThreadId: number
+  startEpochMs: number | null
+  endEpochMs: number | null
+  stack: string[]
+  pinned: number
+}
+
+export interface JfrLifecycleSeries {
+  created: number[]
+  ended: number[]
+  alive: number[]
+}
+
+export interface JfrThreadPool {
+  name: string
+  type: string
+  category: string
+  total: number
+  created: number
+  ended: number
+  aliveAtEnd: number
+  peakAlive: number
+  recordedAllocatedBytes: number
+  series: JfrLifecycleSeries
+  threads: JfrThreadRow[]
+}
+
+export interface JfrThreadOverview {
+  windowStartEpochMs: number
+  windowEndEpochMs: number
+  bucketMillis: number
+  totalThreads: number
+  created: number
+  ended: number
+  aliveAtEnd: number
+  peakActive: number | null
+  series: JfrLifecycleSeries
+  jvmActive: (number | null)[]
+  pools: JfrThreadPool[]
+  virtualThreads: {
+    started: number
+    ended: number
+    pinned: number
+    aggregated: boolean
+    groups: JfrVirtualGroup[]
+    threads: JfrVirtualThread[]
+  }
+}
+
+export interface JfrPlatformThread extends JfrThreadRow {
+  osThreadId: number | null
+  parentJavaThreadId: number | null
+  startStack: string[]
+  cpu: { epochMs: number; user: number; system: number }[]
+  allocation: { epochMs: number; allocated: number }[]
+}
+
+const JFR_TIMEOUT_MS = 300000
+
+export async function uploadJfr(file: File, onProgress?: (percent: number) => void): Promise<JfrReportSummary> {
+  const form = new FormData()
+  form.append('file', file)
+  const { data } = await api.post<JfrReportSummary>('/jfr/upload', form, {
+    timeout: JFR_TIMEOUT_MS,
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total))
+    },
+  })
+  return data
+}
+
+export async function fetchJfrReports(): Promise<JfrReportSummary[]> {
+  const { data } = await api.get<JfrReportSummary[]>('/jfr')
+  return data
+}
+
+export async function fetchJfrReport(id: string): Promise<JfrReportSummary> {
+  const { data } = await api.get<JfrReportSummary>(`/jfr/${id}`)
+  return data
+}
+
+export async function fetchJfrHotspots(
+  id: string,
+  q: string,
+  sort: 'self' | 'inclusive',
+  range: JfrBucketRange | null = null,
+): Promise<JfrHotspotList> {
+  const params = range ? { q, sort, from: range.from, to: range.to } : { q, sort }
+  const { data } = await api.get<JfrHotspotList>(`/jfr/${id}/hotspots`, { params, timeout: 120000 })
+  return data
+}
+
+/** 旧版报告或录制里没有 jdk.CPULoad 时返回 null */
+export async function fetchJfrCpu(id: string): Promise<JfrCpuTimeline | null> {
+  const { data, status } = await api.get<JfrCpuTimeline>(`/jfr/${id}/cpu`)
+  return status === 204 || !data ? null : data
+}
+
+/** path 从热点根方法开始，到要展开的节点为止。 */
+export async function fetchJfrCallers(
+  id: string,
+  path: string[],
+  basis: JfrTreeBasis,
+  q: string,
+  range: JfrBucketRange | null = null,
+): Promise<JfrCaller[]> {
+  const body = { path, basis, q, from: range?.from ?? null, to: range?.to ?? null }
+  const { data } = await api.post<JfrCaller[]>(`/jfr/${id}/hotspots/callers`, body, { timeout: 60000 })
+  return data
+}
+
+export async function fetchJfrThreads(id: string): Promise<JfrThreadOverview> {
+  const { data } = await api.get<JfrThreadOverview>(`/jfr/${id}/threads`)
+  return data
+}
+
+export async function fetchJfrThread(id: string, javaThreadId: number): Promise<JfrPlatformThread> {
+  const { data } = await api.get<JfrPlatformThread>(`/jfr/${id}/threads/${javaThreadId}`)
+  return data
+}
+
+export async function openJfrDump(id: string): Promise<{ analysisId: string; dumpCount: number }> {
+  const { data } = await api.post<{ analysisId: string; dumpCount: number }>(`/jfr/${id}/open-dump`)
+  return data
+}
+
+export async function deleteJfrReport(id: string): Promise<void> {
+  await api.delete(`/jfr/${id}`)
+}
