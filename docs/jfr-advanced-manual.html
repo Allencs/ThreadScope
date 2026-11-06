@@ -1,0 +1,1788 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JFR 进阶手册 · Java Flight Recorder Field Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F6F2EA; --paper-2:#EFE8DB; --card:#FFFDF8; --ink:#18212F; --ink-2:#3B4555; --ink-3:#6E7582; --line:#E0D8C9; --line-2:#CDC2AE;
+  --orange:#E8590C; --orange-2:#FF8A3D; --orange-soft:#FCE7D8;
+  --teal:#0F766E; --teal-soft:#DAF0EB; --blue:#2B5C9E; --blue-soft:#E2EBF7; --gold:#B7791F; --gold-soft:#F8EDD3; --red:#B9381C; --red-soft:#F9E0D8;
+  --serif:"Noto Serif SC","Songti SC","STSong",serif;
+  --sans:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --mono:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;
+  --display:"Instrument Serif","Noto Serif SC",serif;
+  --toc:272px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:24px}
+body{
+  margin:0;color:var(--ink);font-family:var(--sans);font-size:15.5px;line-height:1.78;
+  background-color:var(--paper);
+  background-image:
+    linear-gradient(rgba(24,33,47,.035) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(24,33,47,.035) 1px,transparent 1px),
+    linear-gradient(rgba(24,33,47,.02) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(24,33,47,.02) 1px,transparent 1px);
+  background-size:120px 120px,120px 120px,24px 24px,24px 24px;
+  -webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:100;opacity:.28;mix-blend-mode:multiply;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .38 0 0 0 0 .28 0 0 0 .35 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+::selection{background:var(--orange-soft);color:var(--ink)}
+a{color:var(--blue);text-decoration:none;border-bottom:1px solid rgba(43,92,158,.25)}
+a:hover{border-bottom-color:var(--blue)}
+code{font-family:var(--mono);font-size:.86em;background:rgba(232,89,12,.07);color:#9A3B08;padding:.1em .38em;border-radius:5px;border:1px solid rgba(232,89,12,.12)}
+strong{font-weight:700;color:var(--ink)}
+.mark{background:linear-gradient(transparent 58%,rgba(255,138,61,.28) 58%);padding:0 2px}
+
+/* progress */
+#progress{position:fixed;top:0;left:0;height:3px;width:0;background:linear-gradient(90deg,var(--orange),var(--gold));z-index:200;box-shadow:0 0 12px rgba(232,89,12,.5)}
+
+/* layout */
+.shell{display:grid;grid-template-columns:var(--toc) 1fr}
+aside.toc{position:sticky;top:0;height:100vh;overflow:auto;padding:30px 22px 30px 28px;border-right:1px solid var(--line);background:rgba(246,242,234,.82);backdrop-filter:blur(6px)}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:26px}
+.brand-box{width:40px;height:40px;border-radius:9px;background:var(--orange);position:relative;box-shadow:inset 0 -6px 0 rgba(0,0,0,.12),0 6px 16px -6px rgba(232,89,12,.6)}
+.brand-box::before{content:"";position:absolute;left:6px;right:6px;top:8px;height:3px;background:repeating-linear-gradient(90deg,#18212F 0 4px,transparent 4px 7px);opacity:.75}
+.brand-box::after{content:"";position:absolute;right:7px;bottom:9px;width:7px;height:7px;border-radius:50%;background:#fff;animation:blink 1.4s infinite}
+.brand-t{font-family:var(--serif);font-weight:900;font-size:17px;line-height:1.2}
+.brand-s{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.08em}
+.toc nav a{display:flex;gap:10px;align-items:baseline;padding:6px 10px;margin:1px 0;border:0;border-radius:8px;color:var(--ink-2);font-size:13.5px;transition:all .25s}
+.toc nav a .n{font-family:var(--mono);font-size:11px;color:var(--ink-3);min-width:22px}
+.toc nav a:hover{background:rgba(232,89,12,.06);color:var(--ink)}
+.toc nav a.active{background:var(--card);color:var(--ink);box-shadow:0 0 0 1px var(--line),0 4px 10px -6px rgba(80,50,10,.3)}
+.toc nav a.active .n{color:var(--orange)}
+.toc-foot{margin-top:24px;padding-top:16px;border-top:1px dashed var(--line-2);font-size:11.5px;color:var(--ink-3);font-family:var(--mono);line-height:1.7}
+main{min-width:0;overflow-x:clip}
+.wrap{max-width:1100px;margin:0 auto;padding:0 56px}
+section.sec{padding:96px 0 80px;border-top:1px dashed var(--line-2);position:relative}
+.sec-head{margin-bottom:38px;position:relative}
+.sec-num{font-family:var(--mono);font-size:12.5px;color:var(--orange);letter-spacing:.14em;display:flex;align-items:center;gap:12px}
+.sec-num::after{content:"";flex:1;height:9px;max-width:260px;background:repeating-linear-gradient(90deg,var(--line-2) 0 1px,transparent 1px 8px);border-bottom:1px solid var(--line-2)}
+.sec-head h2{font-family:var(--serif);font-weight:900;font-size:clamp(30px,3.4vw,44px);line-height:1.2;margin:12px 0 4px;letter-spacing:.01em}
+.sec-head .en{font-family:var(--display);font-style:italic;font-size:23px;color:var(--ink-3)}
+.lede{font-size:17px;color:var(--ink-2);max-width:780px;margin-top:16px}
+h3{font-family:var(--serif);font-weight:900;font-size:22px;margin:44px 0 14px;display:flex;align-items:center;gap:10px}
+h3::before{content:"";width:10px;height:10px;background:var(--orange);border-radius:2px;transform:rotate(45deg)}
+h4{font-size:15.5px;margin:22px 0 8px;font-weight:700}
+p{margin:10px 0}
+
+/* cards / grids */
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px 24px;box-shadow:0 1px 0 rgba(255,255,255,.8) inset,0 14px 30px -22px rgba(70,45,10,.35)}
+.grid{display:grid;gap:18px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.tag{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--line-2);color:var(--ink-2);background:var(--paper)}
+.tag.o{color:#9A3B08;border-color:rgba(232,89,12,.35);background:var(--orange-soft)}
+.tag.t{color:var(--teal);border-color:rgba(15,118,110,.3);background:var(--teal-soft)}
+.tag.b{color:var(--blue);border-color:rgba(43,92,158,.3);background:var(--blue-soft)}
+.tag.g{color:var(--gold);border-color:rgba(183,121,31,.35);background:var(--gold-soft)}
+.tag.r{color:var(--red);border-color:rgba(185,56,28,.3);background:var(--red-soft)}
+
+.callout{border-radius:14px;padding:16px 20px 16px 54px;margin:18px 0;position:relative;border:1px solid;font-size:14.5px}
+.callout::before{position:absolute;left:16px;top:14px;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:13px;color:#fff}
+.callout.deep{background:var(--blue-soft);border-color:rgba(43,92,158,.22)}
+.callout.deep::before{content:"∂";background:var(--blue)}
+.callout.warn{background:var(--red-soft);border-color:rgba(185,56,28,.22)}
+.callout.warn::before{content:"!";background:var(--red)}
+.callout.tip{background:var(--teal-soft);border-color:rgba(15,118,110,.22)}
+.callout.tip::before{content:"✓";background:var(--teal)}
+.callout b.h{display:block;margin-bottom:2px}
+
+/* code */
+.code{margin:16px 0;border:1px solid var(--line);border-radius:14px;background:#FCFAF5;overflow:hidden;box-shadow:0 10px 24px -20px rgba(70,45,10,.4)}
+.code-bar{display:flex;align-items:center;gap:10px;padding:8px 12px 8px 16px;border-bottom:1px solid var(--line);background:linear-gradient(#F7F2E8,#F3EDE1)}
+.code-bar .dots{display:flex;gap:6px}
+.code-bar .dots i{width:9px;height:9px;border-radius:50%;background:var(--line-2)}
+.code-bar .dots i:first-child{background:var(--orange-2)}
+.code-bar .title{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);flex:1}
+.copy{font-family:var(--mono);font-size:11px;border:1px solid var(--line-2);background:var(--card);color:var(--ink-2);border-radius:7px;padding:3px 10px;cursor:pointer;transition:.2s}
+.copy:hover{border-color:var(--orange);color:var(--orange)}
+.copy.ok{background:var(--teal);border-color:var(--teal);color:#fff}
+pre{margin:0;padding:16px 18px;overflow:auto;font-family:var(--mono);font-size:12.8px;line-height:1.72;color:#2A3342;tab-size:2}
+pre code{background:none;border:0;padding:0;color:inherit;font-size:inherit}
+.hl-c{color:#9A9EA6;font-style:italic}
+.hl-s{color:#A2580B}
+.hl-a{color:var(--orange);font-weight:500}
+.hl-k{color:var(--teal);font-weight:700}
+.hl-n{color:var(--blue)}
+
+/* table */
+.tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13.8px;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.tbl th{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;text-align:left;color:var(--ink-3);background:var(--paper-2);padding:10px 14px;border-bottom:1px solid var(--line)}
+.tbl td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl tr:last-child td{border-bottom:0}
+.tbl td code{white-space:nowrap}
+.tbl tbody tr{transition:background .2s}
+.tbl tbody tr:hover{background:#FFF8EF}
+
+/* reveal */
+.rv{opacity:0;transform:translateY(22px);transition:opacity .8s cubic-bezier(.2,.7,.2,1),transform .8s cubic-bezier(.2,.7,.2,1)}
+.rv.in{opacity:1;transform:none}
+.rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}.rv.d4{transition-delay:.32s}
+
+/* HERO */
+.hero{min-height:100vh;display:grid;align-items:center;padding:70px 0 60px;position:relative;overflow:hidden}
+.hero-grid{display:grid;grid-template-columns:1.08fr .92fr;gap:40px;align-items:center}
+.hero-kicker{font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--orange);display:flex;align-items:center;gap:10px}
+.rec{display:inline-flex;align-items:center;gap:7px;padding:3px 10px;border:1px solid rgba(232,89,12,.4);border-radius:999px;background:var(--orange-soft)}
+.rec i{width:8px;height:8px;border-radius:50%;background:var(--orange);animation:blink 1.1s infinite}
+@keyframes blink{50%{opacity:.15}}
+.hero h1{white-space:nowrap;font-family:var(--serif);font-weight:900;font-size:clamp(40px,4.7vw,82px);line-height:1.04;margin:18px 0 6px;letter-spacing:-.01em}
+.hero h1 .o{color:var(--orange);position:relative;display:inline-block}
+.hero h1 .o::after{content:"";position:absolute;left:2%;right:2%;bottom:.06em;height:.12em;background:var(--orange);opacity:.18;border-radius:4px;transform-origin:left;animation:underline 1.4s .6s cubic-bezier(.7,0,.2,1) both}
+@keyframes underline{from{transform:scaleX(0)}}
+.hero .en{font-family:var(--display);font-size:clamp(22px,2.3vw,31px);font-style:italic;color:var(--ink-2);line-height:1.3}
+.hero p.intro{font-size:16.5px;color:var(--ink-2);max-width:560px;margin-top:22px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:44px;border:1px solid var(--line);border-radius:16px;background:var(--card);overflow:hidden}
+.stat{padding:16px 18px;border-right:1px solid var(--line)}
+.stat:last-child{border-right:0}
+.stat .v{font-family:var(--serif);font-weight:900;font-size:30px;line-height:1.1;color:var(--ink)}
+.stat .v small{font-size:15px;color:var(--orange);margin-left:2px}
+.stat .l{font-size:12px;color:var(--ink-3);margin-top:4px}
+.fdr{position:relative;filter:drop-shadow(0 30px 40px rgba(120,60,10,.22))}
+.fdr svg{width:100%;height:auto;display:block;animation:float 7s ease-in-out infinite}
+@keyframes float{50%{transform:translateY(-10px) rotate(-.4deg)}}
+.wave-move{animation:waveMove 6s linear infinite}
+@keyframes waveMove{to{transform:translateX(-300px)}}
+.scroll-hint{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:11px;color:var(--ink-3);display:flex;flex-direction:column;align-items:center;gap:8px;letter-spacing:.18em}
+.scroll-hint i{width:1px;height:38px;background:linear-gradient(var(--orange),transparent);animation:drip 2s infinite}
+@keyframes drip{0%{transform:scaleY(0);transform-origin:top}50%{transform:scaleY(1);transform-origin:top}51%{transform-origin:bottom}100%{transform:scaleY(0);transform-origin:bottom}}
+
+/* mental model */
+.pillars .card h4{margin-top:4px;font-family:var(--serif);font-size:18px;font-weight:900}
+.pillar-ic{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;margin-bottom:10px}
+.vs{display:grid;grid-template-columns:150px repeat(4,1fr);border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card);font-size:13.5px}
+.vs>div{padding:11px 14px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+.vs>div:nth-child(5n){border-right:0}
+.vs .h{background:var(--paper-2);font-family:var(--mono);font-size:11.5px;color:var(--ink-3);letter-spacing:.04em}
+.vs .k{font-weight:700;background:#FBF7EF}
+.vs .me{background:#FFF4EA}
+.bar{height:6px;border-radius:4px;background:var(--line);margin-top:6px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--orange);border-radius:4px;transform-origin:left;transform:scaleX(0);transition:transform 1.4s cubic-bezier(.2,.7,.2,1)}
+.in .bar i{transform:scaleX(var(--w))}
+
+/* architecture */
+.arch{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:stretch}
+.arch-svg{padding:12px}
+.arch-svg svg{width:100%;height:auto;display:block}
+.arch-svg .node{cursor:pointer;transition:filter .25s}
+.arch-svg .node:hover rect,.arch-svg .node.sel rect{stroke:var(--orange);stroke-width:2}
+.arch-info{display:flex;flex-direction:column}
+.arch-info .lbl{font-family:var(--mono);font-size:11px;color:var(--orange);letter-spacing:.12em}
+.arch-info h4{font-family:var(--serif);font-size:20px;font-weight:900;margin:6px 0 8px}
+.arch-info p{font-size:14px;color:var(--ink-2)}
+.arch-info .kv{margin-top:auto;border-top:1px dashed var(--line-2);padding-top:12px;font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.fill-anim{animation:fillup 3.2s ease-in-out infinite}
+@keyframes fillup{0%{transform:scaleX(.08)}85%{transform:scaleX(1)}100%{transform:scaleX(.08)}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+
+/* event layout */
+.evlayout{display:flex;border-radius:12px;overflow:hidden;border:1px solid var(--line-2);font-family:var(--mono);font-size:11.5px;margin-top:10px}
+.evlayout div{padding:12px 8px;text-align:center;border-right:1px solid rgba(255,255,255,.6);position:relative;cursor:default;transition:transform .25s,filter .25s;opacity:0;animation:slotIn .5s forwards}
+.evlayout div:hover{filter:brightness(.95);transform:translateY(-3px)}
+.evlayout div b{display:block;font-size:12px;color:var(--ink)}
+.evlayout div span{color:var(--ink-3);font-size:10.5px}
+@keyframes slotIn{from{opacity:0;transform:translateY(-14px)}to{opacity:1;transform:none}}
+.chunk-anat{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin-top:10px}
+.chunk-anat div{height:46px;border-radius:6px;display:grid;place-items:center;font-family:var(--mono);font-size:10.5px;color:var(--ink-2)}
+
+/* lifecycle */
+.lc{display:flex;align-items:center;gap:0;flex-wrap:nowrap;overflow-x:auto;padding:16px 4px 6px}
+.lc-node{flex:0 0 auto;padding:12px 16px;border-radius:12px;border:1.5px solid var(--line-2);background:var(--card);font-family:var(--mono);font-size:13px;font-weight:700;cursor:pointer;transition:all .35s;position:relative}
+.lc-node.on{border-color:var(--orange);background:var(--orange);color:#fff;box-shadow:0 10px 24px -10px rgba(232,89,12,.7);transform:translateY(-3px)}
+.lc-arrow{flex:1 0 34px;height:2px;background:repeating-linear-gradient(90deg,var(--line-2) 0 6px,transparent 6px 10px);position:relative;min-width:34px}
+.lc-arrow::after{content:"";position:absolute;right:-1px;top:-4px;border:5px solid transparent;border-left-color:var(--line-2)}
+.lc-desc{margin-top:14px;min-height:54px;font-size:14.5px;color:var(--ink-2)}
+
+/* ring buffer */
+.rb-tape{position:relative;height:118px;border:1px solid var(--line);border-radius:12px;background:repeating-linear-gradient(90deg,transparent 0 59px,rgba(24,33,47,.05) 59px 60px),#FBF8F1;overflow:hidden;margin-top:14px}
+.rb-chunk{position:absolute;top:30px;height:58px;border-radius:7px;background:var(--teal-soft);border:1px solid rgba(15,118,110,.4);font-family:var(--mono);font-size:10px;color:var(--teal);display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;transition:opacity .6s,transform .6s,background .3s}
+.rb-chunk.cur{background:repeating-linear-gradient(45deg,var(--orange-soft) 0 6px,#FFF3EA 6px 12px);border-color:var(--orange);color:#9A3B08;animation:stripes .8s linear infinite;background-size:17px 17px}
+@keyframes stripes{to{background-position:17px 0}}
+.rb-chunk.dead{opacity:0;transform:translateY(30px) scale(.9);background:var(--red-soft);border-color:var(--red)}
+.rb-chunk.flash{background:var(--gold-soft);border-color:var(--gold);color:var(--gold)}
+.rb-window{position:absolute;top:8px;bottom:8px;border:1.5px dashed var(--orange);border-radius:9px;pointer-events:none;background:rgba(232,89,12,.035)}
+.rb-window span{position:absolute;top:-1px;left:8px;font-family:var(--mono);font-size:10px;color:var(--orange);background:#FBF8F1;padding:0 5px;transform:translateY(-50%)}
+.rb-now{position:absolute;top:0;bottom:0;right:16px;width:2px;background:var(--orange)}
+.rb-now::after{content:"NOW";position:absolute;bottom:4px;right:6px;font-family:var(--mono);font-size:9.5px;color:var(--orange)}
+.ctrl{display:flex;flex-wrap:wrap;gap:12px 22px;align-items:center;font-size:13px;color:var(--ink-2)}
+.ctrl label{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px}
+.ctrl output{min-width:58px;color:var(--orange);font-weight:700}
+input[type=range]{accent-color:var(--orange);width:150px}
+.btn{font-family:var(--mono);font-size:12px;border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:9px;padding:7px 14px;cursor:pointer;transition:.2s}
+.btn:hover{background:var(--orange);border-color:var(--orange)}
+.btn.ghost{background:transparent;color:var(--ink)}
+.btn.ghost:hover{color:#fff}
+.btn.sel{background:var(--orange);border-color:var(--orange);color:#fff}
+.rb-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}
+.rb-stats div{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.rb-stats b{display:block;font-family:var(--serif);font-size:22px;font-weight:900}
+.rb-stats span{font-size:11.5px;color:var(--ink-3)}
+.dumps{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;min-height:10px}
+.dump{font-family:var(--mono);font-size:11.5px;padding:8px 12px;border-radius:10px;background:var(--gold-soft);border:1px solid rgba(183,121,31,.35);color:#7A4F10;animation:pop .5s cubic-bezier(.2,1.4,.4,1)}
+@keyframes pop{from{transform:scale(.6);opacity:0}}
+
+/* sampler */
+.samp-wrap{position:relative}
+#sampCanvas{width:100%;display:block;border-radius:12px;background:#FBF8F1;border:1px solid var(--line)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--ink-2);margin-top:10px}
+.legend i{display:inline-block;width:14px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.seg{display:inline-flex;border:1px solid var(--ink);border-radius:10px;overflow:hidden}
+.seg button{border:0;background:transparent;font-family:var(--mono);font-size:12px;padding:7px 12px;cursor:pointer;color:var(--ink)}
+.seg button.on{background:var(--ink);color:#fff}
+.samp-note{font-size:13.5px;color:var(--ink-2);margin-top:10px;min-height:44px}
+
+/* stepper (cooperative sampling) */
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;counter-reset:s}
+.step{position:relative;padding:18px 18px 16px;border-radius:14px;background:var(--card);border:1px solid var(--line)}
+.step::before{counter-increment:s;content:"0" counter(s);font-family:var(--mono);font-size:11px;color:var(--orange);letter-spacing:.1em}
+.step h5{margin:6px 0 6px;font-size:15px;font-family:var(--serif);font-weight:900}
+.step p{font-size:13px;color:var(--ink-2);margin:0}
+.step:not(:last-child)::after{content:"→";position:absolute;right:-13px;top:44%;color:var(--orange);font-weight:700;z-index:2}
+
+/* builder */
+.builder{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:18px}
+.fgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px 14px}
+.field label{display:block;font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-bottom:4px;letter-spacing:.04em}
+.field select,.field input[type=text]{width:100%;font-family:var(--mono);font-size:12.5px;padding:7px 10px;border:1px solid var(--line-2);border-radius:9px;background:#fff;color:var(--ink);outline:none;transition:.2s}
+.field select:focus,.field input:focus{border-color:var(--orange);box-shadow:0 0 0 3px rgba(232,89,12,.12)}
+.checks{display:flex;flex-wrap:wrap;gap:8px 16px;grid-column:1/-1;font-size:13px}
+.checks label{display:flex;gap:6px;align-items:center;cursor:pointer}
+.checks input{accent-color:var(--orange)}
+.presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.out-block{margin-bottom:12px}
+.out-block .t{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-bottom:4px}
+.out-block pre{background:#FCFAF5;border:1px solid var(--line);border-radius:10px;white-space:pre-wrap;word-break:break-all;font-size:12px;padding:12px 14px}
+
+/* catalog */
+.cat-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.search{flex:1;min-width:220px;font-family:var(--mono);font-size:13px;padding:9px 14px;border:1px solid var(--line-2);border-radius:10px;background:#fff;outline:none}
+.search:focus{border-color:var(--orange);box-shadow:0 0 0 3px rgba(232,89,12,.12)}
+.chip{font-size:12px;padding:5px 12px;border-radius:999px;border:1px solid var(--line-2);background:var(--card);cursor:pointer;transition:.2s;color:var(--ink-2)}
+.chip.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.cat-row td:first-child code{font-weight:700}
+.v-off{color:var(--ink-3)}
+.v-on{color:var(--teal);font-weight:700}
+
+/* flame */
+.fg{position:relative;height:320px;margin-top:12px;border:1px solid var(--line);border-radius:12px;background:#FBF8F1;overflow:hidden}
+.fg-f{position:absolute;height:21px;border-radius:3px;font-family:var(--mono);font-size:10.5px;line-height:21px;padding:0 5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;cursor:pointer;color:#2A2A2A;transition:left .45s cubic-bezier(.2,.7,.2,1),width .45s cubic-bezier(.2,.7,.2,1),opacity .3s,box-shadow .2s;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.12)}
+.fg-f:hover{box-shadow:inset 0 0 0 1.5px var(--ink);z-index:2}
+.fg-f.anc{opacity:.45}
+.fg-f.hit{box-shadow:inset 0 0 0 2px #C2185B;background:#F8BBD0!important}
+.fg-tip{position:fixed;pointer-events:none;background:var(--ink);color:#fff;font-family:var(--mono);font-size:11.5px;padding:8px 10px;border-radius:8px;z-index:300;opacity:0;transition:opacity .15s;max-width:380px}
+
+/* tabs */
+.tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:20px}
+.tab{border:0;background:none;padding:10px 14px;font-size:14px;cursor:pointer;color:var(--ink-3);border-bottom:2.5px solid transparent;margin-bottom:-1px;font-family:var(--sans);transition:.2s}
+.tab:hover{color:var(--ink)}
+.tab.on{color:var(--ink);border-bottom-color:var(--orange);font-weight:700}
+.pane{display:none;animation:fade .45s}
+.pane.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}}
+.pb{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+.pb pre{white-space:pre-wrap;word-break:break-all}
+.pb ol{padding-left:20px;margin:6px 0}
+.pb li{margin:6px 0;font-size:14.5px}
+.signal{display:flex;gap:10px;align-items:flex-start;margin:8px 0;font-size:14px}
+.signal .tag{flex-shrink:0;margin-top:3px}
+
+/* pitfalls */
+.pit{position:relative;overflow:hidden}
+.pit .no{position:absolute;right:16px;top:8px;font-family:var(--display);font-size:64px;color:rgba(232,89,12,.12);line-height:1}
+.pit h4{font-family:var(--serif);font-weight:900;font-size:17px;margin:2px 0 8px;padding-right:50px}
+.pit p{font-size:13.8px;color:var(--ink-2)}
+.pit .fix{font-size:13px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line-2);color:var(--teal)}
+
+/* timeline */
+.tl{position:relative;padding:30px 0 18px;overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--orange) transparent;-webkit-mask-image:linear-gradient(90deg,#000 92%,transparent)}
+.tl-track{display:grid;grid-auto-flow:column;grid-auto-columns:188px;width:max-content;position:relative;padding-right:60px}
+.tl-track::before{content:"";position:absolute;left:0;right:0;top:56px;height:2px;background:linear-gradient(90deg,var(--line-2),var(--orange))}
+.tl-item{padding:0 16px 0 0;position:relative}
+.tl-year{font-family:var(--display);font-size:28px;line-height:1;color:var(--ink)}
+.tl-dot{width:16px;height:16px;border-radius:50%;background:var(--card);border:3px solid var(--orange);margin:14px 0 14px;position:relative;z-index:1;transition:transform .3s}
+.tl-item:hover .tl-dot{transform:scale(1.35);background:var(--orange)}
+.tl-item h5{margin:0 0 4px;font-size:13.5px;font-family:var(--mono);color:var(--orange)}
+.tl-item p{font-size:12.8px;color:var(--ink-2);margin:0;line-height:1.6;overflow-wrap:anywhere}
+
+/* cheat */
+.cheat{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.ck{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;transition:.25s}
+.ck:hover{border-color:var(--orange);transform:translateY(-2px);box-shadow:0 12px 24px -18px rgba(232,89,12,.7)}
+.ck .d{font-size:13px;color:var(--ink-2);display:flex;justify-content:space-between;gap:10px;align-items:center}
+.ck pre{padding:0;font-size:12px;white-space:pre-wrap;word-break:break-all;background:none}
+
+footer{padding:60px 0 80px;border-top:1px dashed var(--line-2);color:var(--ink-3);font-size:13px}
+
+.mob-toggle{display:none}
+@media (max-width:1100px){
+  .shell{grid-template-columns:1fr}
+  aside.toc{position:fixed;left:0;top:0;width:280px;z-index:150;transform:translateX(-100%);transition:transform .35s;background:var(--paper)}
+  aside.toc.open{transform:none;box-shadow:20px 0 40px rgba(0,0,0,.1)}
+  .mob-toggle{display:grid;place-items:center;position:fixed;right:18px;bottom:18px;z-index:160;width:48px;height:48px;border-radius:14px;background:var(--orange);color:#fff;border:0;font-size:20px;box-shadow:0 10px 20px -8px rgba(232,89,12,.8)}
+  .wrap{padding:0 26px}
+  .hero-grid,.arch,.builder,.pb{grid-template-columns:1fr}
+  .g3,.g4,.steps{grid-template-columns:1fr 1fr}
+  .stats{grid-template-columns:1fr 1fr}
+  .stat:nth-child(2){border-right:0}
+  .stat:nth-child(-n+2){border-bottom:1px solid var(--line)}
+  .step::after{display:none}
+}
+@media (max-width:680px){
+  .g2,.g3,.g4,.steps,.cheat,.fgrid,.rb-stats{grid-template-columns:1fr}
+  .vs{grid-template-columns:110px repeat(4,minmax(90px,1fr));overflow-x:auto}
+  .tbl{display:block;overflow-x:auto}
+  .tbl td code{white-space:normal;word-break:break-all}
+  .evlayout{overflow-x:auto}
+  .evlayout div{min-width:86px}
+  .hero h1{white-space:normal}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .rv{opacity:1;transform:none}
+}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<button class="mob-toggle" id="mobToggle" aria-label="目录">☰</button>
+
+<div class="shell">
+<aside class="toc" id="toc">
+  <div class="brand">
+    <div class="brand-box"></div>
+    <div><div class="brand-t">JFR 进阶手册</div><div class="brand-s">FLIGHT RECORDER · FIELD MANUAL</div></div>
+  </div>
+  <nav id="tocNav">
+    <a href="#hero"><span class="n">00</span>封面</a>
+    <a href="#s01"><span class="n">01</span>心智模型</a>
+    <a href="#s02"><span class="n">02</span>内部架构与数据通路</a>
+    <a href="#s03"><span class="n">03</span>录制生命周期与环形缓冲</a>
+    <a href="#s04"><span class="n">04</span>采样原理与偏差</a>
+    <a href="#s05"><span class="n">05</span>配置体系与命令生成器</a>
+    <a href="#s06"><span class="n">06</span>命令行全景</a>
+    <a href="#s07"><span class="n">07</span>关键事件图谱</a>
+    <a href="#s08"><span class="n">08</span>分析工作流与火焰图</a>
+    <a href="#s09"><span class="n">09</span>编程接口：自定义事件与流</a>
+    <a href="#s10"><span class="n">10</span>诊断剧本</a>
+    <a href="#s11"><span class="n">11</span>生产实践与陷阱</a>
+    <a href="#s12"><span class="n">12</span>版本演进</a>
+    <a href="#s13"><span class="n">13</span>速查卡</a>
+  </nav>
+  <div class="toc-foot">适用：HotSpot / OpenJDK 11 – 25<br>模板数值核对自 JDK 21 default.jfc / profile.jfc<br>2026 · Rev. 1</div>
+</aside>
+
+<main>
+<!-- HERO -->
+<section class="hero" id="hero">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <div class="hero-kicker rv"><span class="rec"><i></i>REC</span> ADVANCED FIELD MANUAL · VOL.2</div>
+        <h1 class="rv d1">JFR<br><span class="o">进阶</span>使用手册</h1>
+        <div class="en rv d2">Java Flight Recorder — for engineers who read flame graphs before breakfast.</div>
+        <p class="intro rv d3">这不是入门教程。本手册面向已经熟悉 GC、JIT 与线程模型的 JVM 性能工程师，深入 JFR 的<strong>缓冲与 chunk 机制、采样器的真实行为与偏差、配置合并规则、事件流 API</strong>，并给出可直接落地的<strong>生产常驻方案</strong>与<strong>八类诊断剧本</strong>。</p>
+        <div class="hero-meta rv d4">
+          <span class="tag o">JDK 11 → 25</span><span class="tag t">jdk.jfr / jdk.jfr.consumer</span><span class="tag b">jcmd · jfr · JMC</span><span class="tag g">JEP 328 · 349 · 509 · 518 · 520</span>
+        </div>
+        <div class="stats rv d4">
+          <div class="stat"><div class="v" data-count="1" data-prefix="&lt;">0<small>%</small></div><div class="l">default 模板开销</div></div>
+          <div class="stat"><div class="v" data-count="2" data-prefix="~">0<small>%</small></div><div class="l">profile 模板开销</div></div>
+          <div class="stat"><div class="v" data-count="12">0<small>MB</small></div><div class="l">默认 maxchunksize</div></div>
+          <div class="stat"><div class="v" data-count="64">0<small>帧</small></div><div class="l">默认 stackdepth</div></div>
+        </div>
+      </div>
+      <div class="fdr rv d2">
+        <svg viewBox="0 0 520 470" aria-hidden="true">
+          <defs>
+            <linearGradient id="boxg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF7A2E"/><stop offset="1" stop-color="#D9500A"/></linearGradient>
+            <clipPath id="scr"><rect x="92" y="150" width="300" height="140" rx="10"/></clipPath>
+            <pattern id="hatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="10" fill="#18212F"/></pattern>
+          </defs>
+          <ellipse cx="260" cy="448" rx="200" ry="14" fill="#18212F" opacity=".08"/>
+          <rect x="60" y="90" width="400" height="330" rx="26" fill="url(#boxg)"/>
+          <rect x="60" y="90" width="400" height="330" rx="26" fill="none" stroke="#18212F" stroke-opacity=".25" stroke-width="2"/>
+          <rect x="60" y="108" width="400" height="20" fill="url(#hatch)" opacity=".18"/>
+          <rect x="60" y="384" width="400" height="14" fill="url(#hatch)" opacity=".18"/>
+          <rect x="190" y="52" width="140" height="44" rx="10" fill="#C94A08"/>
+          <rect x="206" y="60" width="108" height="16" rx="4" fill="#FFF3EA" opacity=".9"/>
+          <text x="260" y="72" text-anchor="middle" font-family="JetBrains Mono" font-size="10" font-weight="700" fill="#C94A08">-XX:+JFR</text>
+          <rect x="84" y="142" width="316" height="156" rx="14" fill="#FFFDF8" stroke="#18212F" stroke-opacity=".2"/>
+          <g clip-path="url(#scr)">
+            <rect x="92" y="150" width="300" height="140" fill="#FFFBF4"/>
+            <g stroke="#E8DCC8" stroke-width="1">
+              <line x1="92" y1="185" x2="392" y2="185"/><line x1="92" y1="220" x2="392" y2="220"/><line x1="92" y1="255" x2="392" y2="255"/>
+              <line x1="152" y1="150" x2="152" y2="290"/><line x1="212" y1="150" x2="212" y2="290"/><line x1="272" y1="150" x2="272" y2="290"/><line x1="332" y1="150" x2="332" y2="290"/>
+            </g>
+            <g class="wave-move"><path id="wave1" fill="none" stroke="#E8590C" stroke-width="2.2" stroke-linejoin="round"/></g>
+            <g class="wave-move" style="animation-duration:9s"><path id="wave2" fill="none" stroke="#0F766E" stroke-width="1.6" stroke-opacity=".75"/></g>
+          </g>
+          <text x="100" y="166" font-family="JetBrains Mono" font-size="9.5" fill="#6E7582">CPU · ALLOC · LOCK · GC</text>
+          <text x="384" y="166" text-anchor="end" font-family="JetBrains Mono" font-size="9.5" fill="#E8590C" id="heroClock">00:00:00.000</text>
+          <text x="260" y="338" text-anchor="middle" font-family="Noto Serif SC" font-weight="900" font-size="27" fill="#FFF8F0" letter-spacing="6">FLIGHT RECORDER</text>
+          <text x="260" y="364" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#FFE3CF" letter-spacing="3">DO NOT OPEN · 请勿拆开</text>
+          <circle cx="98" cy="122" r="6" fill="#FFF3EA" opacity=".85"/><circle cx="422" cy="122" r="6" fill="#FFF3EA" opacity=".85"/>
+          <circle cx="98" cy="388" r="6" fill="#FFF3EA" opacity=".85"/><circle cx="422" cy="388" r="6" fill="#FFF3EA" opacity=".85"/>
+          <circle cx="430" cy="312" r="7" fill="#fff"><animate attributeName="opacity" values="1;.2;1" dur="1.2s" repeatCount="indefinite"/></circle>
+          <g font-family="JetBrains Mono" font-size="10" fill="#18212F" opacity=".7">
+            <text x="0" y="40">chunk#0042.jfr</text>
+            <text x="440" y="30">TSC ticks</text>
+            <text x="470" y="250" transform="rotate(90 470 250)">EventStream</text>
+          </g>
+          <path d="M60 36 C 30 60, 30 90, 70 110" fill="none" stroke="#18212F" stroke-opacity=".35" stroke-dasharray="3 4"/>
+          <path d="M470 38 C 500 60, 490 90, 455 108" fill="none" stroke="#18212F" stroke-opacity=".35" stroke-dasharray="3 4"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+  <div class="scroll-hint">SCROLL<i></i></div>
+</section>
+
+<!-- 01 -->
+<section class="sec" id="s01">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 01 / 13</div>
+    <h2>心智模型：JFR 到底是什么</h2>
+    <div class="en">An always-on, in-process, event-based telemetry bus.</div>
+    <p class="lede">把 JFR 理解为<span class="mark">内置在 JVM 里的、强类型的、带时间戳与栈的事件总线</span>，而不是"一个 profiler"。它同时承载三类数据：<strong>持续时间事件</strong>（锁等待、IO、GC 停顿）、<strong>周期快照</strong>（CPU 负载、堆摘要、线程 CPU）与<strong>统计采样</strong>（执行栈采样、分配采样、存活对象采样）。</p>
+  </div>
+
+  <div class="grid g3 pillars">
+    <div class="card rv d1">
+      <div class="pillar-ic" style="background:var(--orange-soft)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#E8590C" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
+      <h4>持续时间事件 Duration</h4>
+      <p style="font-size:14px;color:var(--ink-2)">有 <code>startTime</code> + <code>duration</code>，由 <strong>threshold</strong> 过滤：先测量，超过阈值才提交。典型：<code>jdk.ThreadPark</code>、<code>jdk.SocketRead</code>、<code>jdk.GCPhasePause</code>。</p>
+    </div>
+    <div class="card rv d2">
+      <div class="pillar-ic" style="background:var(--teal-soft)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0F766E" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <h4>周期事件 Periodic</h4>
+      <p style="font-size:14px;color:var(--ink-2)">由 <strong>period</strong> 驱动，可取 <code>1 s</code>、<code>everyChunk</code>、<code>beginChunk</code>、<code>endChunk</code>。典型：<code>jdk.CPULoad</code>、<code>jdk.ThreadCPULoad</code>、<code>jdk.ThreadDump</code>。</p>
+    </div>
+    <div class="card rv d3">
+      <div class="pillar-ic" style="background:var(--blue-soft)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2B5C9E" stroke-width="2"><circle cx="5" cy="17" r="2"/><circle cx="12" cy="9" r="2"/><circle cx="19" cy="14" r="2"/><circle cx="9" cy="4" r="1.3"/><circle cx="17" cy="5" r="1.3"/></svg></div>
+      <h4>采样事件 Sampled</h4>
+      <p style="font-size:14px;color:var(--ink-2)">由 period 或 <strong>throttle</strong>（如 <code>150/s</code>）控制速率。典型：<code>jdk.ExecutionSample</code>、<code>jdk.ObjectAllocationSample</code>、<code>jdk.OldObjectSample</code>。</p>
+    </div>
+  </div>
+
+  <h3 class="rv">与其他工具的定位差异</h3>
+  <div class="vs rv">
+    <div class="h">维度</div><div class="h me">JFR</div><div class="h">async-profiler</div><div class="h">JVMTI Agent / APM</div><div class="h">GC 日志 / -Xlog</div>
+    <div class="k">常驻生产</div><div class="me">✓ 设计目标<div class="bar"><i style="--w:.96"></i></div></div><div>按需 attach<div class="bar"><i style="--w:.6"></i></div></div><div>✓ 但开销高<div class="bar"><i style="--w:.45"></i></div></div><div>✓<div class="bar"><i style="--w:.9"></i></div></div>
+    <div class="k">数据广度</div><div class="me">CPU/分配/锁/IO/GC/JIT/OS<div class="bar"><i style="--w:.95"></i></div></div><div>CPU/分配/锁/wall<div class="bar"><i style="--w:.62"></i></div></div><div>业务链路<div class="bar"><i style="--w:.55"></i></div></div><div>仅 GC/运行时<div class="bar"><i style="--w:.3"></i></div></div>
+    <div class="k">CPU 精度</div><div class="me">≤5 线程/周期；JDK 25 加 CPU 时间采样<div class="bar"><i style="--w:.72"></i></div></div><div>perf_events / itimer，含内核栈<div class="bar"><i style="--w:.95"></i></div></div><div>插桩，失真大<div class="bar"><i style="--w:.35"></i></div></div><div>—<div class="bar"><i style="--w:.02"></i></div></div>
+    <div class="k">事后回溯</div><div class="me">环形缓冲 + 随时 dump<div class="bar"><i style="--w:.98"></i></div></div><div>需提前启动<div class="bar"><i style="--w:.35"></i></div></div><div>依赖后端<div class="bar"><i style="--w:.6"></i></div></div><div>✓<div class="bar"><i style="--w:.8"></i></div></div>
+  </div>
+  <div class="callout deep rv"><b class="h">专家注：为什么 JFR 能做到 &lt;1%？</b>四个设计决定：① 事件写入<strong>线程本地缓冲</strong>，热路径无锁；② 栈、线程、类、符号进入<strong>常量池去重</strong>，事件只存 ID；③ 整数采用 <strong>LEB128 变长压缩</strong>编码，时间戳用 <strong>TSC ticks</strong>；④ Java 事件类在加载时被插桩，未启用时 <code>commit()</code> 经 JIT 内联后接近<strong>死代码</strong>，事件对象经逃逸分析可被标量替换。开销真正的大头是<strong>栈采集</strong>，这也是调高 <code>stackdepth</code> 与降低阈值时开销上升的根源。</div>
+</div>
+</section>
+
+<!-- 02 -->
+<section class="sec" id="s02">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 02 / 13</div>
+    <h2>内部架构与数据通路</h2>
+    <div class="en">From a single <i>commit()</i> to a self-describing chunk on disk.</div>
+    <p class="lede">一个事件从产生到被你在 JMC 里看到，要经过 <strong>线程本地缓冲 → 全局缓冲 → repository chunk → 消费端</strong> 四段旅程。下图中的粒子就是事件流，<strong>点击任一组件</strong>查看内部细节。</p>
+  </div>
+
+  <div class="arch">
+    <div class="card arch-svg rv">
+      <svg viewBox="0 0 1000 430" id="archSvg">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#CDC2AE"/></marker>
+          <linearGradient id="cyl" x1="0" x2="1"><stop offset="0" stop-color="#EDE5D6"/><stop offset=".5" stop-color="#FBF7EF"/><stop offset="1" stop-color="#E5DCCB"/></linearGradient>
+        </defs>
+        <g font-family="JetBrains Mono" font-size="11" fill="#6E7582" letter-spacing="1">
+          <text x="80" y="26" text-anchor="middle">① 事件源</text>
+          <text x="250" y="26" text-anchor="middle">② Thread-Local</text>
+          <text x="470" y="26" text-anchor="middle">③ Global Buffers</text>
+          <text x="700" y="26" text-anchor="middle">④ Repository</text>
+          <text x="915" y="26" text-anchor="middle">⑤ 消费</text>
+        </g>
+        <g id="archPaths" fill="none" stroke="#DCD2C0" stroke-width="1.6">
+          <path id="p0" d="M140 80 L195 80"/><path id="p1" d="M140 150 L195 150"/><path id="p2" d="M140 220 L195 220"/><path id="p3" d="M140 290 L195 290"/>
+          <path id="q0" d="M305 80 C350 80 350 133 400 133"/><path id="q1" d="M305 150 C350 150 350 198 400 198"/><path id="q2" d="M305 220 C350 220 350 198 400 198"/><path id="q3" d="M305 290 C350 290 350 263 400 263"/>
+          <path id="q4" d="M140 370 C260 370 300 290 400 266"/>
+          <path id="r0" d="M540 133 C585 133 580 200 622 200"/><path id="r1" d="M540 198 L622 205"/><path id="r2" d="M540 263 C585 263 580 210 622 210"/>
+          <path id="r3" d="M540 368 C600 368 610 300 640 290" stroke-dasharray="4 4"/>
+          <path id="s0" d="M778 205 C815 205 815 95 850 95"/><path id="s1" d="M778 205 L850 205"/><path id="s2" d="M778 205 C815 205 815 315 850 315"/>
+        </g>
+        <!-- threads -->
+        <g class="node" data-k="src">
+          <rect x="20" y="60" width="120" height="40" rx="9" fill="#FFFDF8" stroke="#CDC2AE"/><text x="80" y="85" text-anchor="middle" font-family="JetBrains Mono" font-size="12" fill="#18212F">http-nio-1</text>
+          <rect x="20" y="130" width="120" height="40" rx="9" fill="#FFFDF8" stroke="#CDC2AE"/><text x="80" y="155" text-anchor="middle" font-family="JetBrains Mono" font-size="12" fill="#18212F">worker-7</text>
+          <rect x="20" y="200" width="120" height="40" rx="9" fill="#FFFDF8" stroke="#CDC2AE"/><text x="80" y="225" text-anchor="middle" font-family="JetBrains Mono" font-size="12" fill="#18212F">kafka-poll</text>
+          <rect x="20" y="270" width="120" height="40" rx="9" fill="#FFFDF8" stroke="#CDC2AE"/><text x="80" y="295" text-anchor="middle" font-family="JetBrains Mono" font-size="12" fill="#18212F">VThread#42</text>
+          <rect x="20" y="348" width="120" height="44" rx="9" fill="#F3EDE1" stroke="#CDC2AE" stroke-dasharray="4 3"/><text x="80" y="367" text-anchor="middle" font-family="Noto Sans SC" font-size="11.5" fill="#3B4555">JVM 内部</text><text x="80" y="383" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#6E7582">GC · JIT · Safepoint</text>
+        </g>
+        <!-- TLB -->
+        <g class="node" data-k="tlb">
+          <g><rect x="195" y="60" width="110" height="40" rx="8" fill="#FFFDF8" stroke="#CDC2AE"/><rect x="203" y="88" width="94" height="5" rx="2" fill="#EFE8DB"/><rect class="fill-anim" x="203" y="88" width="94" height="5" rx="2" fill="#E8590C" style="transform-box:fill-box;transform-origin:left"/><text x="250" y="80" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#3B4555">TLB 8k</text></g>
+          <g><rect x="195" y="130" width="110" height="40" rx="8" fill="#FFFDF8" stroke="#CDC2AE"/><rect x="203" y="158" width="94" height="5" rx="2" fill="#EFE8DB"/><rect class="fill-anim" x="203" y="158" width="94" height="5" rx="2" fill="#E8590C" style="transform-box:fill-box;transform-origin:left;animation-delay:-1s"/><text x="250" y="150" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#3B4555">TLB 8k</text></g>
+          <g><rect x="195" y="200" width="110" height="40" rx="8" fill="#FFFDF8" stroke="#CDC2AE"/><rect x="203" y="228" width="94" height="5" rx="2" fill="#EFE8DB"/><rect class="fill-anim" x="203" y="228" width="94" height="5" rx="2" fill="#E8590C" style="transform-box:fill-box;transform-origin:left;animation-delay:-2.1s"/><text x="250" y="220" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#3B4555">TLB 8k</text></g>
+          <g><rect x="195" y="270" width="110" height="40" rx="8" fill="#FFFDF8" stroke="#CDC2AE"/><rect x="203" y="298" width="94" height="5" rx="2" fill="#EFE8DB"/><rect class="fill-anim" x="203" y="298" width="94" height="5" rx="2" fill="#E8590C" style="transform-box:fill-box;transform-origin:left;animation-delay:-.4s"/><text x="250" y="290" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#3B4555">TLB 8k</text></g>
+        </g>
+        <!-- Global -->
+        <g class="node" data-k="global">
+          <rect x="390" y="96" width="160" height="196" rx="14" fill="#FBF7EF" stroke="#CDC2AE" stroke-dasharray="5 4"/>
+          <rect x="400" y="110" width="140" height="46" rx="9" fill="#FFF4EA" stroke="#E8590C" stroke-opacity=".5"/><text x="470" y="138" text-anchor="middle" font-family="JetBrains Mono" font-size="11.5" fill="#9A3B08">global #0</text>
+          <rect x="400" y="175" width="140" height="46" rx="9" fill="#FFF4EA" stroke="#E8590C" stroke-opacity=".5"/><text x="470" y="203" text-anchor="middle" font-family="JetBrains Mono" font-size="11.5" fill="#9A3B08">global #1</text>
+          <rect x="400" y="240" width="140" height="46" rx="9" fill="#FFF4EA" stroke="#E8590C" stroke-opacity=".5"/><text x="470" y="268" text-anchor="middle" font-family="JetBrains Mono" font-size="11.5" fill="#9A3B08">global #n</text>
+          <text x="470" y="309" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#6E7582">memorysize = 10M</text>
+        </g>
+        <g class="node" data-k="cpool">
+          <rect x="400" y="334" width="140" height="70" rx="10" fill="#E2EBF7" stroke="#2B5C9E" stroke-opacity=".45"/>
+          <text x="470" y="356" text-anchor="middle" font-family="Noto Sans SC" font-size="12" font-weight="700" fill="#2B5C9E">常量池 Constant Pool</text>
+          <text x="470" y="374" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#2B5C9E">StackTrace · Thread</text>
+          <text x="470" y="389" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#2B5C9E">Class · Method · Symbol</text>
+        </g>
+        <!-- Disk -->
+        <g class="node" data-k="disk">
+          <rect x="622" y="88" width="156" height="240" fill="url(#cyl)" stroke="#CDC2AE"/>
+          <ellipse cx="700" cy="88" rx="78" ry="18" fill="#FBF7EF" stroke="#CDC2AE"/>
+          <ellipse cx="700" cy="328" rx="78" ry="18" fill="#E5DCCB" stroke="#CDC2AE"/>
+          <rect x="644" y="120" width="112" height="28" rx="6" fill="#DAF0EB" stroke="#0F766E" stroke-opacity=".4"/><text x="700" y="138" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#0F766E">chunk_0041</text>
+          <rect x="644" y="156" width="112" height="28" rx="6" fill="#DAF0EB" stroke="#0F766E" stroke-opacity=".4"/><text x="700" y="174" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#0F766E">chunk_0042</text>
+          <rect x="644" y="192" width="112" height="28" rx="6" fill="#DAF0EB" stroke="#0F766E" stroke-opacity=".4"/><text x="700" y="210" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#0F766E">chunk_0043</text>
+          <rect class="pulse" x="644" y="228" width="112" height="28" rx="6" fill="#FCE7D8" stroke="#E8590C"/><text x="700" y="246" text-anchor="middle" font-family="JetBrains Mono" font-size="10.5" fill="#9A3B08">writing…</text>
+          <text x="700" y="290" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#6E7582">maxchunksize 12M</text>
+        </g>
+        <!-- consumers -->
+        <g class="node" data-k="out">
+          <rect x="850" y="72" width="130" height="46" rx="10" fill="#FFFDF8" stroke="#CDC2AE"/><text x="915" y="92" text-anchor="middle" font-family="JetBrains Mono" font-size="11.5" fill="#18212F">JFR.dump</text><text x="915" y="108" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#6E7582">→ app.jfr</text>
+          <rect x="850" y="182" width="130" height="46" rx="10" fill="#FFFDF8" stroke="#CDC2AE"/><text x="915" y="202" text-anchor="middle" font-family="JetBrains Mono" font-size="11.5" fill="#18212F">EventStream</text><text x="915" y="218" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#6E7582">flush ≈ 1 s</text>
+          <rect x="850" y="292" width="130" height="46" rx="10" fill="#FFFDF8" stroke="#CDC2AE"/><text x="915" y="312" text-anchor="middle" font-family="JetBrains Mono" font-size="11.5" fill="#18212F">JMC / jfr view</text><text x="915" y="328" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#6E7582">离线分析</text>
+        </g>
+        <g id="particles"></g>
+      </svg>
+    </div>
+    <div class="card arch-info rv d1" id="archInfo">
+      <div class="lbl">COMPONENT</div>
+      <h4>点击左侧组件</h4>
+      <p>每个组件都会显示其职责、关键参数和容易踩的坑。</p>
+      <div class="kv">—</div>
+    </div>
+  </div>
+
+  <h3 class="rv">事件的二进制形态</h3>
+  <p class="rv">每个事件在 chunk 中是一条紧凑记录。整数字段默认以 <strong>LEB128 变长编码</strong>写入；线程、栈、类等引用字段只是<strong>常量池 ID</strong>。悬停查看字段含义：</p>
+  <div class="evlayout rv" id="evLayout">
+    <div style="flex:.7;background:#F3EDE1;animation-delay:.05s" title="事件总字节数"><b>size</b><span>varint</span></div>
+    <div style="flex:.9;background:#FCE7D8;animation-delay:.15s" title="事件类型 ID，指向 metadata 中的类型描述"><b>typeId</b><span>→ metadata</span></div>
+    <div style="flex:1.2;background:#F8EDD3;animation-delay:.25s" title="开始时间，单位为 ticks（通常为 TSC）"><b>startTime</b><span>ticks</span></div>
+    <div style="flex:1.1;background:#F8EDD3;animation-delay:.35s" title="持续时间 ticks；瞬时事件为 0"><b>duration</b><span>ticks</span></div>
+    <div style="flex:1.1;background:#E2EBF7;animation-delay:.45s" title="线程引用，指向 Thread 常量池"><b>eventThread</b><span>cp ref</span></div>
+    <div style="flex:1.1;background:#E2EBF7;animation-delay:.55s" title="栈引用，相同栈只存一次"><b>stackTrace</b><span>cp ref</span></div>
+    <div style="flex:2.4;background:#DAF0EB;animation-delay:.65s" title="事件自身字段，按 metadata 顺序排列"><b>payload fields…</b><span>按 metadata 声明顺序</span></div>
+  </div>
+  <h4 class="rv">一个 chunk 文件的解剖</h4>
+  <div class="chunk-anat rv">
+    <div style="grid-column:span 2;background:#18212F;color:#fff">Header<br>FLR\0</div>
+    <div style="grid-column:span 6;background:repeating-linear-gradient(90deg,#FCE7D8 0 14px,#F8EDD3 14px 28px)">Events …（按写入顺序，不保证时间有序）</div>
+    <div style="grid-column:span 3;background:#E2EBF7;color:#2B5C9E">Checkpoint · 常量池</div>
+    <div style="grid-column:span 1;background:#DAF0EB;color:#0F766E">Meta</div>
+  </div>
+  <div class="grid g2" style="margin-top:18px">
+    <div class="callout deep rv" style="margin:0"><b class="h">chunk 自描述</b>每个 chunk 都携带自己的 metadata 与常量池，因此可以<strong>单独解析</strong>。<code>jfr disassemble</code> 可以把大文件拆成 chunk，<code>jfr assemble</code> 可以把 repository 里的 chunk 拼回一个完整的 .jfr，这是进程被 <code>kill -9</code> 之后抢救数据的关键手段。</div>
+    <div class="callout warn rv" style="margin:0"><b class="h">事件在文件内并非时间有序</b>事件按"缓冲被刷出的顺序"写入，不同线程的事件交错。<code>RecordingFile</code> 逐条读取时<strong>不保证</strong> startTime 递增；<code>EventStream</code> 默认 <code>setOrdered(true)</code> 会在每个 chunk 内重排，代价是额外内存与延迟。</div>
+  </div>
+</div>
+</section>
+
+<!-- 03 -->
+<section class="sec" id="s03">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 03 / 13</div>
+    <h2>录制生命周期与环形缓冲</h2>
+    <div class="en">Recordings are views; the repository is the tape.</div>
+    <p class="lede">理解两件事就能避免 80% 的"为什么 dump 出来没数据"：<strong>Recording 的状态机</strong>，以及 <strong>repository 以整个 chunk 为单位淘汰</strong>的环形缓冲语义。</p>
+  </div>
+
+  <div class="card rv">
+    <div class="lc" id="lc">
+      <div class="lc-node" data-i="0">NEW</div><div class="lc-arrow"></div>
+      <div class="lc-node" data-i="1">DELAYED</div><div class="lc-arrow"></div>
+      <div class="lc-node" data-i="2">STARTING</div><div class="lc-arrow"></div>
+      <div class="lc-node" data-i="3">RUNNING</div><div class="lc-arrow"></div>
+      <div class="lc-node" data-i="4">STOPPED</div><div class="lc-arrow"></div>
+      <div class="lc-node" data-i="5">CLOSED</div>
+    </div>
+    <div class="lc-desc" id="lcDesc"></div>
+  </div>
+
+  <h3 class="rv">交互：maxage / maxsize 如何约束 repository</h3>
+  <p class="rv">下面模拟一个 <code>disk=true</code> 的常驻录制。橙色条纹块是<strong>正在写入的 chunk</strong>，青色块是已封存的 chunk。调整滑块，观察<strong>哪个约束先生效</strong>；点击 dump 看看 <code>begin=-15m</code> 实际拿到多长的数据。</p>
+  <div class="card rv">
+    <div class="ctrl">
+      <label>maxage <input type="range" id="rbAge" min="30" max="720" step="30" value="360"><output id="rbAgeO">6h</output></label>
+      <label>maxsize <input type="range" id="rbSize" min="100" max="2000" step="50" value="1000"><output id="rbSizeO">1000 MB</output></label>
+      <span style="flex:1"></span>
+      <button class="btn ghost" id="rbDump15">JFR.dump begin=-15m</button>
+      <button class="btn" id="rbDumpAll">JFR.dump（全部）</button>
+    </div>
+    <div class="rb-tape" id="rbTape"><div class="rb-window" id="rbWin"><span>maxage 窗口</span></div><div class="rb-now"></div></div>
+    <div class="rb-stats">
+      <div><b id="rbN">0</b><span>chunk 数量</span></div>
+      <div><b id="rbMB">0</b><span>磁盘占用（MB）</span></div>
+      <div><b id="rbSpan">0</b><span>实际覆盖时长</span></div>
+      <div><b id="rbBind">—</b><span>当前生效约束</span></div>
+    </div>
+    <div class="dumps" id="rbDumps"></div>
+  </div>
+  <div class="grid g2" style="margin-top:18px">
+    <div class="callout tip rv" style="margin:0"><b class="h">按 chunk 粒度淘汰</b>只有当一个 chunk 的<strong>结束时间</strong>早于 maxage 窗口时，它才会被删除。因此实际保留的数据总是<strong>略多于</strong> maxage；dump 的 <code>maxage</code>/<code>begin</code> 同样会带上整块 chunk，再由工具按时间截取。</div>
+    <div class="callout warn rv" style="margin:0"><b class="h">不指定上限 = 250 MB</b>启动时既未设 maxage 也未设 maxsize，JVM 会打印 <code>No limit specified, using maxsize=250MB as default</code>。高事件量的 profile 录制可能只覆盖几十分钟，务必显式设置。</div>
+  </div>
+  <div class="callout deep rv"><b class="h">多录制并存时的设置合并</b>同一事件被多个 Recording 启用时，JVM 取<strong>最"详细"</strong>的设置：最低 threshold、最短 period、任一开启栈则开启栈。每个 Recording 拿到的数据可能多于它自身的配置；dump 时并不会按各自的阈值重新过滤。所以"临时开一个 profile 录制做诊断"会让常驻录制在这段时间里<strong>同样变重</strong>。</div>
+</div>
+</section>
+
+<!-- 04 -->
+<section class="sec" id="s04">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 04 / 13</div>
+    <h2>采样原理与偏差</h2>
+    <div class="en">What the sampler sees, and what it silently misses.</div>
+    <p class="lede"><code>jdk.ExecutionSample</code> 不依赖 safepoint，因此没有经典的 safepoint bias。它有自己的偏差：采样器线程每个周期<strong>最多挑 5 个处于 Java 状态的线程</strong>、<strong>1 个处于 native 状态的线程</strong>，挂起线程后遍历栈。线程一多，覆盖率随之下降。JDK 25 的 <strong>JEP 509 CPU 时间采样</strong>按每个线程消耗的 CPU 时间触发，偏差模型完全不同。</p>
+  </div>
+
+  <div class="card rv">
+    <div class="ctrl" style="margin-bottom:12px">
+      <div class="seg" id="sampMode"><button data-m="exec" class="on">ExecutionSample（墙钟周期）</button><button data-m="cpu">CPUTimeSample（JDK 25）</button></div>
+      <label>线程数 <input type="range" id="sampN" min="4" max="24" value="12"><output id="sampNO">12</output></label>
+      <label>period <input type="range" id="sampP" min="10" max="40" step="10" value="20"><output id="sampPO">20 ms</output></label>
+      <button class="btn ghost" id="sampPause">暂停</button>
+    </div>
+    <div class="samp-wrap"><canvas id="sampCanvas" height="380"></canvas></div>
+    <div class="legend">
+      <span><i style="background:#F7B98E"></i>运行 Java 代码（on-CPU）</span>
+      <span><i style="background:#E9CF8F"></i>native 计算（on-CPU）</span>
+      <span><i style="background:#C9D8EE"></i>native 阻塞 IO（off-CPU，但线程状态是 in_native）</span>
+      <span><i style="background:#E7E1D6"></i>park / blocked</span>
+      <span><i style="background:#E8590C;border-radius:50%;width:10px"></i>Java 样本</span>
+      <span><i style="background:#2B5C9E;border-radius:50%;width:10px"></i>native 样本</span>
+      <span><i style="background:#0F766E;border-radius:50%;width:10px"></i>CPU 时间样本</span>
+    </div>
+    <div class="samp-note" id="sampNote"></div>
+  </div>
+
+  <div class="grid g2" style="margin-top:18px">
+    <div class="card rv">
+      <h4 style="margin-top:0">ExecutionSample 的盲区</h4>
+      <ul style="padding-left:18px;font-size:14px;color:var(--ink-2);margin:6px 0">
+        <li><strong>线程数 ≫ 5 时</strong>，每个线程两次样本之间的间隔被拉长，短时热点可能完全漏采。</li>
+        <li>样本数与 <strong>on-CPU 时间不成正比</strong>：只要线程处于 Java 状态就可能被选中，被 OS 抢占但未让出 Java 状态的线程同样计入。</li>
+        <li><code>NativeMethodSample</code> 会把<strong>阻塞在 socket read 里的线程</strong>也算作 native 样本，这些线程实际 off-CPU，不能拿来做 CPU 归因。</li>
+        <li>GC、JIT 编译线程不是 Java 线程，<strong>不会出现在执行采样中</strong>，需要看 <code>jdk.ThreadCPULoad</code> 和 <code>gc-cpu-time</code> 视图。</li>
+      </ul>
+    </div>
+    <div class="card rv d1">
+      <h4 style="margin-top:0">CPUTimeSample（JEP 509，Linux，实验）</h4>
+      <ul style="padding-left:18px;font-size:14px;color:var(--ink-2);margin:6px 0">
+        <li>基于每个线程的 <strong>CPU 时间定时器</strong>，线程每消耗固定量的 CPU 时间就触发一次采样，样本数与 CPU 消耗成正比。</li>
+        <li>覆盖 Java 代码与 native 代码中的 CPU 消耗，<strong>off-CPU 等待天然不产生样本</strong>。</li>
+        <li>通过 <code>throttle</code> 配置，可写速率（<code>500/s</code>）或 CPU 时间间隔（<code>10ms</code>）。</li>
+        <li>丢样会以 <code>jdk.CPUTimeSamplesLost</code> 事件报告，分析时务必检查。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 class="rv">JDK 25 · JEP 518 协作式采样：栈到底在哪里被遍历</h3>
+  <p class="rv">旧实现由采样线程挂起目标线程后<strong>异步遍历其栈</strong>，必须启发式地处理"栈处于不一致状态"的情况，稳定性风险高。JEP 518 改为把栈遍历交还给目标线程本身：</p>
+  <div class="steps rv">
+    <div class="step"><h5>挂起并记录</h5><p>采样线程挂起目标线程，只记录 PC / SP 等顶层帧信息，放入该线程的采样请求队列。</p></div>
+    <div class="step"><h5>立即恢复</h5><p>目标线程马上恢复执行，采样线程的工作量变得极小。</p></div>
+    <div class="step"><h5>safepoint 处理</h5><p>目标线程到达下一个 safepoint poll 时，在<strong>自身栈处于一致状态</strong>的前提下处理请求。</p></div>
+    <div class="step"><h5>从记录位置重建</h5><p>依据挂起时记录的顶层帧重建栈，样本位置仍是挂起时刻，<strong>不引入 safepoint bias</strong>。</p></div>
+  </div>
+</div>
+</section>
+
+<!-- 05 -->
+<section class="sec" id="s05">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 05 / 13</div>
+    <h2>配置体系与命令生成器</h2>
+    <div class="en">Templates, control options, and per-event overrides.</div>
+    <p class="lede">JDK 17 起，配置可分三层叠加：<strong>.jfc 模板</strong>（default / profile / 自定义），<strong>模板控制选项</strong>（如 <code>gc=detailed</code>、<code>locking-threshold=5ms</code>），以及<strong>单事件覆盖</strong>（<code>jdk.ThreadPark#threshold=2ms</code>）。三层都可以直接写在 <code>-XX:StartFlightRecording</code> 或 <code>JFR.start</code> 上。</p>
+  </div>
+
+  <table class="tbl rv">
+    <thead><tr><th>控制选项</th><th>可选值</th><th>default</th><th>profile</th><th>影响的事件</th></tr></thead>
+    <tbody>
+      <tr><td><code>method-profiling</code></td><td>off · normal · high · max</td><td>normal（20 ms）</td><td>high（10 ms）</td><td>ExecutionSample 的 period；max = 1 ms（高开销）。NativeMethodSample 始终 20 ms</td></tr>
+      <tr><td><code>allocation-profiling</code></td><td>off · low · medium · high · maximum</td><td>low（150/s）</td><td>medium（300/s）</td><td>ObjectAllocationSample 的 throttle；high = 1000/s</td></tr>
+      <tr><td><code>gc</code></td><td>off · normal · detailed · high · all</td><td>normal</td><td>detailed</td><td>high 才开 TLAB 分配事件；all 才开 ObjectCount（堆遍历）</td></tr>
+      <tr><td><code>compiler</code></td><td>off · normal · detailed · all</td><td>normal</td><td>detailed</td><td>Compilation 阈值 1000 ms → 100 ms，编译失败事件</td></tr>
+      <tr><td><code>memory-leaks</code></td><td>off · types · stack-traces · gc-roots</td><td>types</td><td>stack-traces</td><td>OldObjectSample 是否带栈 / 是否计算 GC Root 路径</td></tr>
+      <tr><td><code>exceptions</code></td><td>off · errors · all</td><td>errors</td><td>errors</td><td>all 才开 JavaExceptionThrow（高开销）</td></tr>
+      <tr><td><code>locking-threshold</code></td><td>timespan</td><td>20ms</td><td>10ms</td><td>JavaMonitorEnter / Wait、ThreadPark</td></tr>
+      <tr><td><code>file-threshold</code> / <code>socket-threshold</code></td><td>timespan</td><td>20ms</td><td>10ms</td><td>FileRead/Write、SocketRead/Write</td></tr>
+      <tr><td><code>thread-dump</code></td><td>off · once · 60s · 10s · 1s</td><td colspan="2">once（可在 jfc 中改为周期）</td><td>jdk.ThreadDump</td></tr>
+      <tr><td><code>class-loading</code></td><td>true · false</td><td colspan="2">false</td><td>ClassLoad / ClassDefine 等</td></tr>
+    </tbody>
+  </table>
+
+  <div class="code rv"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">shell · 生成并复用自定义模板</span><button class="copy">复制</button></div>
+<pre><code data-lang="sh"># 基于 profile 生成团队模板：降低锁阈值、加深分配采样、单独放大某个事件
+jfr configure --input profile --output /opt/jfr/team.jfc \
+  locking-threshold=5ms allocation-profiling=high \
+  jdk.SocketRead#threshold=2ms +com.acme.Order#enabled=true
+
+# 交互式向导（逐项提问）
+jfr configure --interactive --output /opt/jfr/wizard.jfc
+
+# 使用：模板 + 选项 + 单事件覆盖可以叠加
+java -XX:StartFlightRecording:settings=/opt/jfr/team.jfc,gc=detailed,jdk.ThreadPark#threshold=1ms ...</code></pre></div>
+
+  <h3 class="rv">交互：命令生成器</h3>
+  <p class="rv">选一个场景预设，或逐项调整；同时生成<strong>启动参数</strong>和<strong>对运行中进程的 jcmd</strong>两种写法。</p>
+  <div class="card rv">
+    <div class="presets" id="presets">
+      <button class="btn ghost" data-p="prod">生产常驻</button>
+      <button class="btn ghost" data-p="cpu">CPU 剖析</button>
+      <button class="btn ghost" data-p="lat">延迟毛刺</button>
+      <button class="btn ghost" data-p="leak">内存泄漏</button>
+      <button class="btn ghost" data-p="alloc">分配压力</button>
+      <button class="btn ghost" data-p="jdk25">JDK 25 CPU 时间</button>
+    </div>
+    <div class="builder">
+      <div class="fgrid" id="bForm">
+        <div class="field"><label>name</label><input type="text" id="b_name" value="continuous"></div>
+        <div class="field"><label>settings</label><select id="b_settings"><option>default</option><option>profile</option></select></div>
+        <div class="field"><label>maxage</label><input type="text" id="b_maxage" value="6h"></div>
+        <div class="field"><label>maxsize</label><input type="text" id="b_maxsize" value="1g"></div>
+        <div class="field"><label>duration（空 = 不限）</label><input type="text" id="b_duration" value=""></div>
+        <div class="field"><label>filename</label><input type="text" id="b_filename" value="/data/jfr/%p-%t.jfr"></div>
+        <div class="field"><label>method-profiling</label><select id="b_method"><option value="">（模板默认）</option><option>off</option><option>normal</option><option>high</option><option>max</option></select></div>
+        <div class="field"><label>allocation-profiling</label><select id="b_alloc"><option value="">（模板默认）</option><option>off</option><option>low</option><option>medium</option><option>high</option><option>maximum</option></select></div>
+        <div class="field"><label>gc</label><select id="b_gc"><option value="">（模板默认）</option><option>off</option><option>normal</option><option>detailed</option><option>high</option><option>all</option></select></div>
+        <div class="field"><label>memory-leaks</label><select id="b_leak"><option value="">（模板默认）</option><option>off</option><option>types</option><option>stack-traces</option><option>gc-roots</option></select></div>
+        <div class="field"><label>locking-threshold</label><input type="text" id="b_lock" value="" placeholder="如 5ms"></div>
+        <div class="field"><label>stackdepth（FlightRecorderOptions）</label><input type="text" id="b_depth" value="128"></div>
+        <div class="checks">
+          <label><input type="checkbox" id="b_exit" checked>dumponexit</label>
+          <label><input type="checkbox" id="b_preserve" checked>preserve-repository</label>
+          <label><input type="checkbox" id="b_repo" checked>repository=/data/jfr/repo</label>
+          <label><input type="checkbox" id="b_exc">exceptions=all</label>
+          <label><input type="checkbox" id="b_cpu">jdk.CPUTimeSample（JDK 25 · Linux）</label>
+        </div>
+      </div>
+      <div>
+        <div class="out-block"><div class="t">▸ JVM 启动参数</div><pre id="outJvm"></pre></div>
+        <div class="out-block"><div class="t">▸ 运行中进程（jcmd）</div><pre id="outJcmd"></pre></div>
+        <button class="btn" id="copyBuilder">复制启动参数</button>
+        <div class="samp-note" id="bNote" style="font-size:12.5px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 06 -->
+<section class="sec" id="s06">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 06 / 13</div>
+    <h2>命令行全景</h2>
+    <div class="en">Four entry points: the flag, the options, jcmd, and the jfr tool.</div>
+  </div>
+
+  <div class="tabs rv" data-tabs="cli">
+    <button class="tab on" data-t="c1">-XX:StartFlightRecording</button>
+    <button class="tab" data-t="c2">-XX:FlightRecorderOptions</button>
+    <button class="tab" data-t="c3">jcmd JFR.*</button>
+    <button class="tab" data-t="c4">jfr 工具</button>
+  </div>
+  <div class="panes rv" data-panes="cli">
+    <div class="pane on" data-p="c1">
+      <table class="tbl">
+        <thead><tr><th>参数</th><th>说明</th><th>专家备注</th></tr></thead>
+        <tbody>
+          <tr><td><code>name</code></td><td>录制名，jcmd 通过它定位</td><td>常驻录制固定命名，便于自动化脚本 dump</td></tr>
+          <tr><td><code>settings</code></td><td>default / profile / .jfc 路径，可逗号分隔多个</td><td>多个模板会合并，后者覆盖前者</td></tr>
+          <tr><td><code>delay</code> / <code>duration</code></td><td>延迟启动 / 定长录制</td><td>压测时用 <code>delay=2m</code> 跳过预热期</td></tr>
+          <tr><td><code>disk</code></td><td>是否写 repository，默认 true</td><td>false 时只在内存循环，容量即 memorysize</td></tr>
+          <tr><td><code>maxage</code> / <code>maxsize</code></td><td>保留窗口</td><td>两者同时设置时<strong>先触达者生效</strong></td></tr>
+          <tr><td><code>filename</code></td><td>结束或退出时的输出文件</td><td>支持 <code>%p</code>（PID）与 <code>%t</code>（时间戳）</td></tr>
+          <tr><td><code>dumponexit</code></td><td>JVM 正常退出时 dump</td><td>依赖 shutdown hook，<code>kill -9</code> 和 OOM Killer 下无效</td></tr>
+          <tr><td><code>path-to-gc-roots</code></td><td>结束时计算泄漏对象到 GC Root 的路径</td><td>在 safepoint 中执行，大堆可能停顿数秒</td></tr>
+          <tr><td><code>&lt;event&gt;#&lt;setting&gt;</code></td><td>单事件覆盖（JDK 17+）</td><td>如 <code>jdk.JavaMonitorEnter#threshold=1ms</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pane" data-p="c2">
+      <table class="tbl">
+        <thead><tr><th>选项</th><th>默认</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><code>repository</code></td><td>java.io.tmpdir</td><td>chunk 存放目录；容器中务必指向持久卷，避免写进 tmpfs 占用内存</td></tr>
+          <tr><td><code>stackdepth</code></td><td>64</td><td>Spring / Reactor / Kotlin 协程常需 128–256；JFR 初始化后不可修改</td></tr>
+          <tr><td><code>memorysize</code></td><td>10M</td><td>全局缓冲总量；事件洪峰丢数据时调大</td></tr>
+          <tr><td><code>maxchunksize</code></td><td>12M</td><td>单个 chunk 上限；越小淘汰越精细、文件越多</td></tr>
+          <tr><td><code>threadbuffersize</code></td><td>8k</td><td>线程本地缓冲，一般不建议改</td></tr>
+          <tr><td><code>old-object-queue-size</code></td><td>256</td><td>OldObjectSample 候选池大小</td></tr>
+          <tr><td><code>preserve-repository</code></td><td>false</td><td>JDK 21+：退出后保留 chunk，崩溃取证必备</td></tr>
+          <tr><td><code>dumppath</code></td><td>当前目录</td><td>严重错误时紧急转储（hs_err_pid*.jfr / hs_oom_pid*.jfr）的位置；<strong>目录必须预先存在</strong>，否则 JVM 启动直接失败</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pane" data-p="c3">
+      <div class="code"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">jcmd · 运行时控制</span><button class="copy">复制</button></div>
+<pre><code data-lang="sh"># 查看当前所有录制及其设置
+jcmd &lt;pid&gt; JFR.check verbose=true
+
+# 启动（支持与启动参数相同的模板选项和单事件覆盖）
+jcmd &lt;pid&gt; JFR.start name=diag settings=profile duration=5m \
+  locking-threshold=5ms filename=/data/jfr/diag-%p-%t.jfr
+
+# 从常驻录制中截取最近 15 分钟（也可写绝对时间 begin=13:20:00 end=13:35:00）
+jcmd &lt;pid&gt; JFR.dump name=continuous begin=-15m filename=/data/jfr/incident.jfr
+
+# 泄漏分析：dump 时计算 GC Root 路径（会引起停顿，选低峰）
+jcmd &lt;pid&gt; JFR.dump name=continuous path-to-gc-roots=true filename=/data/jfr/leak.jfr
+
+# JDK 21+：不落盘，直接在终端看视图（默认窗口 maxage=10m）
+jcmd &lt;pid&gt; JFR.view hot-methods
+jcmd &lt;pid&gt; JFR.view maxage=30m gc-pauses
+
+# 运行时调整 repository / 紧急转储路径（stackdepth 等需在初始化前设置）
+jcmd &lt;pid&gt; JFR.configure repositorypath=/data/jfr/repo dumppath=/data/jfr/crash
+
+jcmd &lt;pid&gt; JFR.stop name=diag</code></pre></div>
+    </div>
+    <div class="pane" data-p="c4">
+      <div class="grid g2">
+        <div class="code" style="margin:0"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">jfr · 查看</span><button class="copy">复制</button></div>
+<pre><code data-lang="sh">jfr summary app.jfr          # 事件类型计数与体积
+jfr view all-views app.jfr   # 一次性输出所有视图
+jfr view --width 200 hot-methods app.jfr
+jfr view jdk.GCPhasePause app.jfr   # 视图名也可以是事件类型
+jfr print --events 'jdk.ThreadPark,jdk.JavaMonitorEnter' \
+          --stack-depth 20 app.jfr
+jfr print --json --categories 'GC' app.jfr
+jfr metadata --events jdk.ObjectAllocationSample</code></pre></div>
+        <div class="code" style="margin:0"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">jfr · 加工</span><button class="copy">复制</button></div>
+<pre><code data-lang="sh"># 外发前脱敏：去掉环境变量与系统属性
+jfr scrub --exclude-events \
+  InitialEnvironmentVariable,InitialSystemProperty \
+  app.jfr app-safe.jfr
+
+# 只保留某些线程
+jfr scrub --include-threads 'http-nio-*' app.jfr web.jfr
+
+# 拆分 / 拼接 chunk（抢救 repository）
+jfr disassemble --max-chunks 4 --output ./parts app.jfr
+jfr assemble /data/jfr/repo/2026_11_06_10_00_00_4242 rescued.jfr</code></pre></div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 07 -->
+<section class="sec" id="s07">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 07 / 13</div>
+    <h2>关键事件图谱</h2>
+    <div class="en">The 30 events that answer 90% of performance questions.</div>
+    <p class="lede">数值核对自 JDK 21 自带的 <code>default.jfc</code> / <code>profile.jfc</code>；JDK 25 新事件单独标注。可搜索、可按类别过滤，<strong>点击行</strong>可展开实战要点。</p>
+  </div>
+  <div class="cat-tools rv">
+    <input class="search" id="catQ" placeholder="搜索事件名 / 关键字，如 Park、TLAB、pinned …">
+    <div id="catChips" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+  </div>
+  <table class="tbl rv" id="catTbl">
+    <thead><tr><th style="width:30%">事件</th><th style="width:12%">类别</th><th style="width:15%">default</th><th style="width:15%">profile</th><th>要点</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+</section>
+
+<!-- 08 -->
+<section class="sec" id="s08">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 08 / 13</div>
+    <h2>分析工作流与火焰图</h2>
+    <div class="en">Triage in the terminal, deep-dive in a GUI, automate with JSON.</div>
+    <p class="lede">推荐三段式：<strong>终端分诊</strong>（<code>jfr summary</code> + <code>jfr view</code>，30 秒内判断方向），<strong>图形深挖</strong>（JMC / IntelliJ Profiler / async-profiler 转换器生成火焰图），<strong>脚本化回归</strong>（<code>jfr print --json</code> 或 <code>RecordingFile</code> API 生成指标，接入 CI）。</p>
+  </div>
+
+  <div class="grid g3">
+    <div class="card rv"><span class="tag o">STEP 1 · 分诊</span><h4>先看"有什么"</h4><p style="font-size:13.8px;color:var(--ink-2)"><code>jfr summary</code> 看事件分布：<code>ExecutionSample</code> 太少说明 CPU 不是主因；<code>ThreadPark</code> 暴增说明在等待；出现 <code>jdk.DataLoss</code> 说明缓冲不足。</p></div>
+    <div class="card rv d1"><span class="tag t">STEP 2 · 定向</span><h4>按假设选视图</h4><p style="font-size:13.8px;color:var(--ink-2)"><code>hot-methods</code>、<code>gc-pauses</code>、<code>allocation-by-site</code>、<code>contention-by-site</code>、<code>latencies-by-type</code>、<code>pinned-threads</code>。用 <code>--verbose</code> 查看视图背后的查询。</p></div>
+    <div class="card rv d2"><span class="tag b">STEP 3 · 深挖</span><h4>时间轴 + 栈聚合</h4><p style="font-size:13.8px;color:var(--ink-2)">JMC 的线程时间轴可以把 GC 停顿、锁等待、IO 叠在同一时刻对照；火焰图用于栈聚合，注意区分<strong>按方法</strong>与<strong>按行号</strong>两种聚合方式。</p></div>
+  </div>
+
+  <h3 class="rv">交互：火焰图读法</h3>
+  <p class="rv">下面是一份模拟的 <code>jdk.ExecutionSample</code> 聚合结果。<strong>点击帧可放大</strong>，点击底部 all 复位；搜索框可高亮匹配帧。颜色：<span class="tag o">应用</span> <span class="tag g">三方库</span> <span class="tag t">JDK</span>。</p>
+  <div class="card rv">
+    <div class="ctrl"><input class="search" id="fgQ" placeholder="高亮搜索：Pattern / Jackson / Hikari …" style="max-width:360px"><button class="btn ghost" id="fgReset">复位</button><span id="fgInfo" style="font-family:var(--mono);font-size:12px;color:var(--ink-3)"></span></div>
+    <div class="fg" id="fg"></div>
+  </div>
+  <div class="callout deep rv"><b class="h">读图要点</b>宽度代表样本占比，<strong>与时间先后无关</strong>；看"平顶"找自耗时热点（这里是 <code>Matcher.find</code>，正则在热路径中被反复编译或回溯）。JFR 火焰图只反映"线程在 Java 状态时在做什么"，<strong>没有</strong>等待时间。等待问题请转到锁 / IO 事件，或用 wall-clock 模式的 async-profiler。</div>
+
+  <h3 class="rv">脚本化：把 JFR 变成可回归的指标</h3>
+  <div class="grid g2">
+    <div class="code rv" style="margin:0"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">shell · jq 提取 GC 停顿</span><button class="copy">复制</button></div>
+<pre><code data-lang="sh">jfr print --json --events jdk.GCPhasePause app.jfr \
+ | jq -r '.recording.events[]
+     | [.values.startTime, .values.name, .values.duration]
+     | @tsv' \
+ | sort -k3 -r | head -20
+
+# async-profiler 转换器：JFR -> 交互式火焰图 HTML
+jfrconv --cpu app.jfr cpu.html
+jfrconv --alloc app.jfr alloc.html</code></pre></div>
+    <div class="code rv d1" style="margin:0"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">java · RecordingFile 统计分配热点</span><button class="copy">复制</button></div>
+<pre><code data-lang="java">var bytesByClass = new HashMap&lt;String, Long&gt;();
+try (var rf = new RecordingFile(Path.of("app.jfr"))) {
+  while (rf.hasMoreEvents()) {
+    RecordedEvent e = rf.readEvent();
+    if (!e.getEventType().getName().equals("jdk.ObjectAllocationSample")) continue;
+    // weight = 该样本代表的分配字节数（已按节流率放大）
+    bytesByClass.merge(e.getClass("objectClass").getName(),
+                       e.getLong("weight"), Long::sum);
+  }
+}
+bytesByClass.entrySet().stream()
+  .sorted(Map.Entry.&lt;String, Long&gt;comparingByValue().reversed())
+  .limit(10).forEach(System.out::println);</code></pre></div>
+  </div>
+</div>
+</section>
+
+<!-- 09 -->
+<section class="sec" id="s09">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 09 / 13</div>
+    <h2>编程接口：自定义事件与事件流</h2>
+    <div class="en">Make your business semantics first-class citizens of the timeline.</div>
+    <p class="lede">自定义事件的最大价值是<strong>把业务语义（订单号、租户、traceId）钉在与 GC、锁、IO 相同的时间轴上</strong>。毛刺发生时，一眼就能看出那 200 ms 里 JVM 在干什么。</p>
+  </div>
+
+  <div class="tabs rv" data-tabs="api">
+    <button class="tab on" data-t="a1">自定义事件</button>
+    <button class="tab" data-t="a2">周期事件</button>
+    <button class="tab" data-t="a3">进程内事件流</button>
+    <button class="tab" data-t="a4">远程事件流</button>
+    <button class="tab" data-t="a5">JDK 25 方法追踪</button>
+  </div>
+  <div class="panes rv" data-panes="api">
+    <div class="pane on" data-p="a1">
+      <div class="code"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">OrderEvent.java</span><button class="copy">复制</button></div>
+<pre><code data-lang="java">@Name("com.acme.OrderPlaced")
+@Label("Order Placed")
+@Category({"Acme", "Trading"})
+@Description("下单全链路耗时")
+@StackTrace(false)          // 业务事件通常不需要栈，省下最大头的开销
+@Threshold("5 ms")          // 默认阈值，可被 .jfc / 命令行覆盖
+public class OrderEvent extends Event {
+  @Label("Order Id")  public long orderId;
+  @Label("Tenant")    public String tenant;
+  @Label("Trace Id")  public String traceId;
+  @DataAmount         public long payloadBytes;
+}
+
+// 热路径用法
+var evt = new OrderEvent();
+evt.begin();
+Result r = engine.place(order);
+evt.end();
+if (evt.shouldCommit()) {          // 未启用或未超阈值时直接跳过字段赋值
+  evt.orderId = order.id();
+  evt.tenant = order.tenant();
+  evt.traceId = MDC.get("traceId");
+  evt.payloadBytes = r.size();
+  evt.commit();
+}</code></pre></div>
+      <div class="callout tip"><b class="h">启用方式</b>自定义事件默认启用、阈值取注解值。可以用 <code>-XX:StartFlightRecording:com.acme.OrderPlaced#threshold=1ms</code> 覆盖；若不在 .jfc 中，使用 <code>jfr configure +com.acme.OrderPlaced#enabled=true</code> 写入模板。</div>
+    </div>
+    <div class="pane" data-p="a2">
+      <div class="code"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">PoolStatsEvent.java</span><button class="copy">复制</button></div>
+<pre><code data-lang="java">@Name("com.acme.PoolStats")
+@Label("Connection Pool Stats")
+@Period("1 s")
+@StackTrace(false)
+public class PoolStatsEvent extends Event {
+  public int active;
+  public int idle;
+  public int waiting;
+}
+
+// 注册一次即可，JFR 按 period 在录制线程中回调
+FlightRecorder.addPeriodicEvent(PoolStatsEvent.class, () -> {
+  var e = new PoolStatsEvent();
+  e.active = pool.getActiveConnections();
+  e.idle = pool.getIdleConnections();
+  e.waiting = pool.getThreadsAwaitingConnection();
+  e.commit();
+});</code></pre></div>
+      <div class="callout warn"><b class="h">回调要快</b>周期回调在 JFR 内部线程中执行，<strong>不要做阻塞 IO</strong>；不再需要时用 <code>FlightRecorder.removePeriodicEvent</code> 注销，避免类卸载泄漏。</div>
+    </div>
+    <div class="pane" data-p="a3">
+      <div class="code"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">JfrWatchdog.java · 进程内实时告警</span><button class="copy">复制</button></div>
+<pre><code data-lang="java">var rs = new RecordingStream();
+rs.enable("jdk.CPULoad").withPeriod(Duration.ofSeconds(1));
+rs.enable("jdk.GCPhasePause").withThreshold(Duration.ofMillis(50));
+rs.enable("jdk.JavaMonitorEnter").withThreshold(Duration.ofMillis(10)).withStackTrace();
+rs.setMaxAge(Duration.ofMinutes(5));    // 同时保留最近 5 分钟供事后 dump
+
+rs.onEvent("jdk.CPULoad", e -> cpuGauge.set(e.getFloat("machineTotal")));
+rs.onEvent("jdk.GCPhasePause", e ->
+    log.warn("GC pause {} {} ms", e.getString("name"), e.getDuration().toMillis()));
+rs.onEvent("jdk.JavaMonitorEnter", e ->
+    contention.record(e.getClass("monitorClass").getName(), e.getDuration()));
+
+rs.startAsync();
+// 触发告警时把最近窗口落盘
+// rs.dump(Path.of("/data/jfr/alert-" + System.currentTimeMillis() + ".jfr"));</code></pre></div>
+      <div class="callout deep"><b class="h">延迟与顺序</b>事件流依赖 JFR 约每秒一次的 flush，<strong>端到端延迟约 1–2 秒</strong>，不适合作为毫秒级熔断依据。高吞吐场景可 <code>setReuse(true)</code> 复用事件对象减少分配；若不关心顺序，<code>setOrdered(false)</code> 能进一步降低延迟。另一个进程可以用 <code>EventStream.openRepository(path)</code> 旁路消费同一个 repository。</div>
+    </div>
+    <div class="pane" data-p="a4">
+      <div class="code"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">RemoteTail.java · JDK 16+（模块 jdk.management.jfr）</span><button class="copy">复制</button></div>
+<pre><code data-lang="java">var url = new JMXServiceURL("service:jmx:rmi:///jndi/rmi://10.0.3.17:7091/jmxrmi");
+try (var connector = JMXConnectorFactory.connect(url);
+     var rs = new RemoteRecordingStream(connector.getMBeanServerConnection())) {
+  rs.enable("jdk.GCPhasePause");
+  rs.enable("jdk.ExecutionSample").withPeriod(Duration.ofMillis(20));
+  rs.onEvent("jdk.GCPhasePause", System.out::println);
+  rs.start();   // 阻塞，直到连接关闭
+}</code></pre></div>
+      <div class="callout warn"><b class="h">安全面</b>远程流意味着开放 JMX 端口，必须启用认证与 TLS，或仅在受控网段 / sidecar 中使用。也可以通过 <code>FlightRecorderMXBean</code> 远程控制录制的启停与下载。</div>
+    </div>
+    <div class="pane" data-p="a5">
+      <div class="code"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">JEP 520 · 无需改代码的方法级计时与追踪</span><button class="copy">复制</button></div>
+<pre><code data-lang="sh"># 追踪每一次调用（带栈），定位"谁在频繁触发 HashMap 扩容"
+java '-XX:StartFlightRecording:jdk.MethodTrace#filter=java.util.HashMap::resize,filename=trace.jfr' -jar app.jar
+jfr print --events jdk.MethodTrace --stack-depth 20 trace.jfr
+
+# 统计调用次数与耗时：按类、方法或注解过滤
+java '-XX:StartFlightRecording:jdk.MethodTiming#filter=com.acme.order.OrderService,filename=timing.jfr' -jar app.jar
+jfr view method-timing timing.jfr
+
+# 类初始化耗时排查
+java '-XX:StartFlightRecording:jdk.MethodTiming#filter=::&lt;clinit&gt;,filename=clinit.jfr' -jar app.jar</code></pre></div>
+      <div class="callout tip"><b class="h">何时用它替代采样</b>采样回答"时间花在哪"，追踪回答"<strong>被调了多少次、每次多久、谁调的</strong>"。它通过字节码插桩实现，开销随 filter 范围线性增长，<strong>只对少量精确目标开启</strong>，切勿用宽泛的包名过滤。</div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 10 -->
+<section class="sec" id="s10">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 10 / 13</div>
+    <h2>诊断剧本</h2>
+    <div class="en">Symptom → events → verdict. Eight battle-tested playbooks.</div>
+  </div>
+  <div class="tabs rv" data-tabs="pb" id="pbTabs"></div>
+  <div class="panes rv" data-panes="pb" id="pbPanes"></div>
+</div>
+</section>
+
+<!-- 11 -->
+<section class="sec" id="s11">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 11 / 13</div>
+    <h2>生产实践与陷阱</h2>
+    <div class="en">Always-on, bounded, scrubbed, and boringly automated.</div>
+  </div>
+
+  <h3 class="rv">基线：常驻录制方案</h3>
+  <div class="code rv"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">JAVA_TOOL_OPTIONS · 生产基线（JDK 21+）</span><button class="copy">复制</button></div>
+<pre><code data-lang="sh"># 先建好目录：dumppath 不存在时 JVM 会报 "Failure when starting JFR" 并拒绝启动
+mkdir -p /data/jfr/repo /data/jfr/crash
+
+-XX:StartFlightRecording:name=continuous,settings=default,disk=true,maxage=6h,maxsize=2g,dumponexit=true,filename=/data/jfr/exit-%p-%t.jfr
+-XX:FlightRecorderOptions:repository=/data/jfr/repo,stackdepth=128,preserve-repository=true,dumppath=/data/jfr/crash
+
+# Kubernetes preStop：优雅停机前先截取最近 30 分钟
+jcmd 1 JFR.dump name=continuous begin=-30m filename=/data/jfr/prestop-%p-%t.jfr
+
+# 告警联动：P99 告警触发时由 sidecar 执行
+jcmd $(pgrep -f app.jar) JFR.dump name=continuous begin=-10m filename=/data/jfr/alert-%t.jfr</code></pre></div>
+
+  <div class="grid g4" style="margin:18px 0 0">
+    <div class="card rv"><span class="tag t">有界</span><p style="font-size:13.5px;margin-top:8px">maxage 与 maxsize 同时设置；repository 放在独立卷并监控磁盘。</p></div>
+    <div class="card rv d1"><span class="tag o">可取证</span><p style="font-size:13.5px;margin-top:8px"><code>preserve-repository</code> 加 <code>dumppath</code>，进程崩溃后仍能拿到 chunk。</p></div>
+    <div class="card rv d2"><span class="tag b">可触发</span><p style="font-size:13.5px;margin-top:8px">告警、发布、preStop 自动 dump，不依赖人工登录机器。</p></div>
+    <div class="card rv d3"><span class="tag r">脱敏</span><p style="font-size:13.5px;margin-top:8px">外发前 <code>jfr scrub</code>，命令行参数和环境变量里常带密钥。</p></div>
+  </div>
+
+  <h3 class="rv">十二个真实陷阱</h3>
+  <div class="grid g3" id="pits"></div>
+</div>
+</section>
+
+<!-- 12 -->
+<section class="sec" id="s12">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 12 / 13</div>
+    <h2>版本演进</h2>
+    <div class="en">From a commercial feature to the JVM's built-in nervous system.</div>
+    <p class="lede" style="font-size:14px">← 横向滚动查看完整时间线 →</p>
+  </div>
+  <div class="tl rv"><div class="tl-track" id="tl"></div></div>
+  <div class="callout tip rv"><b class="h">JDK 8 用户</b>OpenJDK 8u262 起已移植 JFR，命令与 JDK 11 基本一致，但没有事件流、<code>jfr view</code>、模板控制选项以及 JDK 16+ 的 <code>ObjectAllocationSample</code>。分配分析只能依赖开销更高的 TLAB 事件，此时强烈建议升级。</div>
+</div>
+</section>
+
+<!-- 13 -->
+<section class="sec" id="s13">
+<div class="wrap">
+  <div class="sec-head rv">
+    <div class="sec-num">§ 13 / 13</div>
+    <h2>速查卡</h2>
+    <div class="en">Pin this to your on-call runbook.</div>
+  </div>
+  <div class="cheat" id="cheat"></div>
+</div>
+</section>
+
+<footer>
+  <div class="wrap" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>JFR 进阶使用手册 · 模板数值以 JDK 21 自带 .jfc 为基准，JDK 25 特性按 JEP 509 / 518 / 520 描述。<br>视图与选项以 <code>jfr help view</code>、<code>jfr help configure</code> 的实际输出为准。</div>
+    <div style="font-family:var(--mono)">● REC — end of tape</div>
+  </div>
+</footer>
+</main>
+</div>
+
+<div class="fg-tip" id="fgTip"></div>
+
+<script>
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+/* ---------- syntax highlight ---------- */
+const RX = {
+  java: /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\\n])*")|(@[A-Za-z]+)|\b(public|private|protected|static|final|class|extends|new|return|if|else|try|for|while|var|void|long|int|float|double|boolean|continue|this|null|true|false)\b|\b(\d[\d_]*(?:\.\d+)?[LlFfDd]?)\b/g,
+  sh: /((?:^|(?<=\s))#[^\n]*)|("(?:\\.|[^"\\\n])*"|'[^'\n]*')|(-XX:[A-Za-z+]+|--[a-z][\w-]*)|(?:^|(?<=[\s|(]))(java|jcmd|jfr|jq|jfrconv|sort|head|pgrep|mkdir)(?=\s)|(<pid>|\$\([^)]*\)|%[pt])/gm
+};
+const CLS = ['hl-c','hl-s','hl-a','hl-k','hl-n'];
+function highlight(src, lang) {
+  const re = RX[lang]; if (!re) return esc(src);
+  let out = '', last = 0; re.lastIndex = 0;
+  for (const m of src.matchAll(re)) {
+    out += esc(src.slice(last, m.index));
+    const gi = m.slice(1).findIndex(g => g !== undefined);
+    out += `<span class="${CLS[gi]}">${esc(m[0])}</span>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(src.slice(last));
+}
+function hlAll(root = document) {
+  $$('code[data-lang]', root).forEach(c => { c.innerHTML = highlight(c.textContent, c.dataset.lang); });
+}
+
+/* ---------- copy ---------- */
+document.addEventListener('click', e => {
+  const b = e.target.closest('.copy'); if (!b) return;
+  const pre = b.closest('.code, .ck').querySelector('pre');
+  navigator.clipboard?.writeText(pre.textContent).then(() => {
+    b.textContent = '已复制'; b.classList.add('ok');
+    setTimeout(() => { b.textContent = '复制'; b.classList.remove('ok'); }, 1400);
+  });
+});
+
+/* ---------- progress / scrollspy / reveal ---------- */
+const prog = $('#progress');
+const links = $$('#tocNav a');
+const secs = links.map(a => $(a.getAttribute('href')));
+function onScroll() {
+  const h = document.documentElement;
+  prog.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + '%';
+  let idx = 0;
+  secs.forEach((s, i) => { if (s.getBoundingClientRect().top < innerHeight * .35) idx = i; });
+  links.forEach((a, i) => a.classList.toggle('active', i === idx));
+}
+addEventListener('scroll', onScroll, {passive: true}); onScroll();
+const io = new IntersectionObserver(es => es.forEach(en => {
+  if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+}), {threshold: .12});
+function observe(root = document) { $$('.rv:not(.in)', root).forEach(el => io.observe(el)); }
+$('#mobToggle').onclick = () => $('#toc').classList.toggle('open');
+links.forEach(a => a.addEventListener('click', () => $('#toc').classList.remove('open')));
+
+/* ---------- hero: count-up, waveform, clock ---------- */
+$$('[data-count]').forEach(el => {
+  const target = +el.dataset.count, pre = esc(el.dataset.prefix || ''), unit = el.querySelector('small').outerHTML;
+  let t0 = null;
+  const step = ts => {
+    t0 ??= ts; const p = Math.min(1, (ts - t0) / 1400), e = 1 - Math.pow(1 - p, 3);
+    el.innerHTML = pre + Math.round(target * e) + unit;
+    if (p < 1) requestAnimationFrame(step);
+  };
+  setTimeout(() => requestAnimationFrame(step), 500);
+});
+function wavePath(seed, amp, base, spikes) {
+  let d = '', rnd = seed;
+  const r = () => (rnd = (rnd * 9301 + 49297) % 233280) / 233280;
+  const pts = [];
+  for (let x = 0; x <= 300; x += 6) {
+    let y = base + Math.sin(x / 300 * Math.PI * 4) * amp * .35 + (r() - .5) * amp * .5;
+    if (spikes && x % 96 === 48) y -= amp * 1.6;
+    pts.push([x, y]);
+  }
+  pts[pts.length - 1][1] = pts[0][1];
+  for (let k = 0; k < 3; k++) pts.forEach(([x, y], i) => { if (k || i) d += (d ? ' L' : 'M') + (92 + x + k * 300) + ' ' + y.toFixed(1); });
+  return d;
+}
+$('#wave1').setAttribute('d', wavePath(7, 30, 232, true));
+$('#wave2').setAttribute('d', wavePath(3, 20, 262, false));
+const clk = $('#heroClock'), t0 = performance.now();
+(function tick() {
+  const ms = performance.now() - t0, f = (n, w = 2) => String(Math.floor(n)).padStart(w, '0');
+  clk.textContent = `${f(ms / 3600000)}:${f(ms / 60000 % 60)}:${f(ms / 1000 % 60)}.${f(ms % 1000, 3)}`;
+  requestAnimationFrame(tick);
+})();
+
+/* ---------- architecture ---------- */
+const NS = 'http://www.w3.org/2000/svg';
+const pg = $('#particles');
+const flows = [['p0',1.1],['p1',1.3],['p2',.9],['p3',1.5],['q0',1.6],['q1',1.4],['q2',1.8],['q3',1.5],['q4',2.4],['r0',1.7],['r1',1.4],['r2',1.9],['r3',2.6],['s0',2],['s1',1.6],['s2',2.2]];
+flows.forEach(([id, dur]) => {
+  const n = id.startsWith('r3') || id.startsWith('q4') ? 2 : 3;
+  for (let i = 0; i < n; i++) {
+    const c = document.createElementNS(NS, 'circle');
+    const color = id[0] === 'r' && id === 'r3' ? '#2B5C9E' : id[0] === 's' ? '#0F766E' : '#E8590C';
+    c.setAttribute('r', id[0] === 's' ? 3.4 : 3.8); c.setAttribute('fill', color); c.setAttribute('opacity', '.85');
+    const am = document.createElementNS(NS, 'animateMotion');
+    am.setAttribute('dur', dur + 's'); am.setAttribute('repeatCount', 'indefinite'); am.setAttribute('begin', (-(dur / n) * i - Math.random() * .4).toFixed(2) + 's');
+    const mp = document.createElementNS(NS, 'mpath'); mp.setAttribute('href', '#' + id);
+    am.appendChild(mp); c.appendChild(am); pg.appendChild(c);
+  }
+});
+const ARCH = {
+  src: ['① 事件源', 'Java 线程与 JVM 内部', '<strong>Java 事件</strong>（如 <code>jdk.SocketRead</code>、自定义 <code>Event</code>）由 JDK 类库或你的代码调用 <code>commit()</code> 产生；<strong>原生事件</strong>（GC、JIT、safepoint、采样）由 HotSpot C++ 代码在关键点直接写入。虚拟线程事件写入其载体线程（carrier thread）的缓冲。', 'Java 事件：类加载时插桩 · 原生事件：编译期埋点'],
+  tlb: ['② Thread-Local Buffer', '无锁的线程本地缓冲', '每个线程独占一块缓冲，事件写入是<strong>纯内存追加</strong>，不需要任何同步。缓冲写满、线程退出或 flush 时，内容被<strong>提升（promote）</strong>到全局缓冲。这是热路径开销极低的核心原因。', 'thread_buffer_size = 8k（不建议改）'],
+  global: ['③ Global Buffers', '全局内存缓冲池', '多个全局缓冲组成内存池，由 JFR 的 recorder 线程周期性写入磁盘。<code>disk=false</code> 时数据<strong>只在这里循环覆盖</strong>，容量就是 memorysize。事件洪峰超过写盘速度时会丢数据，录制中会出现 <code>jdk.DataLoss</code> 事件。', 'memorysize = 10M · 由它推导 globalbuffercount/size'],
+  cpool: ['常量池', '去重的心脏', '栈帧、线程、类、方法、模块、符号等对象只写一次，事件里只存 <strong>ID</strong>。常量池以 <strong>checkpoint</strong> 事件写入每个 chunk，保证 chunk 自描述。stackdepth 越大，栈常量池越大，去重率越低。', 'stackdepth = 64 · 栈被截断时 truncated = true'],
+  disk: ['④ Repository', '磁盘上的环形磁带', '默认位于 <code>java.io.tmpdir</code> 下以时间戳和 PID 命名的目录。chunk 达到 <code>maxchunksize</code>、录制启停或开始 dump 时会<strong>轮转</strong>。每个 chunk 带有 header、事件、常量池和 metadata，<strong>可独立解析</strong>。maxage / maxsize 以整个 chunk 为单位淘汰。', 'maxchunksize = 12M · repository / preserve-repository'],
+  out: ['⑤ 消费端', '三种读取方式', '<strong>JFR.dump</strong>：把相关 chunk 拷贝拼接成 .jfr 文件。<strong>EventStream</strong>（JDK 14+，JEP 349）：JFR 约每秒 flush 一次，消费者近实时读取 repository。<strong>离线分析</strong>：JMC、<code>jfr view</code>、IntelliJ、async-profiler 转换器。', 'RecordingStream · EventStream.openRepository · RemoteRecordingStream']
+};
+const archInfo = $('#archInfo');
+$$('#archSvg .node').forEach(n => n.addEventListener('click', () => {
+  $$('#archSvg .node').forEach(x => x.classList.remove('sel')); n.classList.add('sel');
+  const [l, t, p, kv] = ARCH[n.dataset.k];
+  archInfo.innerHTML = `<div class="lbl">${l}</div><h4>${t}</h4><p>${p}</p><div class="kv">${kv}</div>`;
+  archInfo.animate([{opacity: 0, transform: 'translateY(8px)'}, {opacity: 1, transform: 'none'}], {duration: 350, easing: 'ease-out'});
+}));
+$('#archSvg .node[data-k="tlb"]').dispatchEvent(new Event('click'));
+
+/* ---------- lifecycle ---------- */
+const LC = [
+  '<b>NEW</b> · 通过 <code>new Recording()</code> 或 <code>JFR.start</code> 创建，尚未开始。此时可以调整 settings、maxAge、maxSize、destination。',
+  '<b>DELAYED</b> · 指定了 <code>delay=2m</code>，等待启动。常用于跳过应用预热和 JIT 编译风暴，让数据只反映稳态。',
+  '<b>STARTING</b> · 正在应用设置并启动：合并所有运行中录制的事件设置，必要时轮转出新的 chunk。',
+  '<b>RUNNING</b> · 事件持续写入。任何时刻都可以 <code>JFR.dump</code>（只拷贝，不中断）或 <code>JFR.view</code>（JDK 21+）。',
+  '<b>STOPPED</b> · 不再采集，但数据仍在 repository 中，可以继续 dump。设置了 <code>duration</code> 的录制会自动进入此状态并写出 filename。',
+  '<b>CLOSED</b> · 资源释放；若没有其他录制引用这些 chunk，它们将从 repository 中删除（除非开启 <code>preserve-repository</code>）。'
+];
+let lcI = 0, lcTimer;
+const lcNodes = $$('#lc .lc-node');
+function lcShow(i) { lcI = i; lcNodes.forEach((n, k) => n.classList.toggle('on', k === i)); $('#lcDesc').innerHTML = LC[i]; }
+function lcAuto() { clearInterval(lcTimer); lcTimer = setInterval(() => lcShow((lcI + 1) % LC.length), 2600); }
+lcNodes.forEach(n => n.addEventListener('click', () => { lcShow(+n.dataset.i); lcAuto(); }));
+lcShow(0); lcAuto();
+
+/* ---------- ring buffer ---------- */
+const rb = {chunks: [], now: 0, id: 0, cur: null, el: new Map()};
+const tape = $('#rbTape'), win = $('#rbWin');
+const fmtMin = m => m >= 60 ? (m / 60).toFixed(m % 60 ? 1 : 0) + 'h' : Math.round(m) + 'm';
+const ageEl = $('#rbAge'), sizeEl = $('#rbSize');
+function rbParams() { return {age: +ageEl.value, size: +sizeEl.value}; }
+function newChunk() { rb.cur = {id: ++rb.id, start: rb.now, end: rb.now, mb: 0, cap: 9 + Math.random() * 3, rate: .9 + Math.random() * .7}; rb.chunks.push(rb.cur); }
+newChunk();
+for (let i = 0; i < 400; i++) rbStep(1.5, true);
+function rbStep(dt, silent) {
+  const {age, size} = rbParams();
+  rb.now += dt; rb.cur.end = rb.now; rb.cur.mb += dt * rb.cur.rate;
+  if (rb.cur.mb >= rb.cur.cap) { rb.cur.mb = rb.cur.cap; newChunk(); }
+  let bind = '—';
+  while (rb.chunks.length > 1) {
+    const total = rb.chunks.reduce((a, c) => a + c.mb, 0), first = rb.chunks[0];
+    if (total > size) bind = 'maxsize';
+    else if (rb.now - first.end > age) bind = 'maxage';
+    else break;
+    rb.chunks.shift();
+    if (!silent) { const d = rb.el.get(first.id); if (d) { d.classList.add('dead'); setTimeout(() => d.remove(), 650); rb.el.delete(first.id); } }
+  }
+  if (bind !== '—') rb.bind = bind;
+}
+function rbRender() {
+  const {age, size} = rbParams();
+  const W = tape.clientWidth - 16, span = age * 1.12, x0 = rb.now - span;
+  const X = t => Math.max(-50, (t - x0) / span * W);
+  for (const c of rb.chunks) {
+    let d = rb.el.get(c.id);
+    if (!d) { d = document.createElement('div'); d.className = 'rb-chunk'; tape.appendChild(d); rb.el.set(c.id, d); }
+    d.classList.toggle('cur', c === rb.cur);
+    const l = X(c.start), r = X(c.end);
+    d.style.left = l + 'px'; d.style.width = Math.max(4, r - l - 2) + 'px';
+    d.textContent = (r - l > 46) ? `#${String(c.id).padStart(3, '0')} · ${c.mb.toFixed(1)}M` : '';
+  }
+  win.style.left = X(rb.now - age) + 'px'; win.style.width = (W - X(rb.now - age)) + 'px';
+  const total = rb.chunks.reduce((a, c) => a + c.mb, 0);
+  $('#rbN').textContent = rb.chunks.length;
+  $('#rbMB').textContent = total.toFixed(0) + ' / ' + size;
+  $('#rbSpan').textContent = fmtMin(rb.now - rb.chunks[0].start);
+  $('#rbBind').textContent = rb.bind || '—';
+  $('#rbBind').style.color = rb.bind === 'maxsize' ? 'var(--red)' : 'var(--teal)';
+}
+let rbLast = performance.now();
+(function rbLoop(ts) {
+  const dt = Math.min(100, ts - rbLast) / 1000; rbLast = ts;
+  rbStep(dt * rbParams().age / 28);
+  rbRender(); requestAnimationFrame(rbLoop);
+})(rbLast);
+function rbSync() { $('#rbAgeO').textContent = fmtMin(+ageEl.value); $('#rbSizeO').textContent = sizeEl.value + ' MB'; rb.bind = null; }
+ageEl.oninput = sizeEl.oninput = rbSync; rbSync();
+function rbDump(win) {
+  const from = win ? rb.now - win : -Infinity;
+  const sel = rb.chunks.filter(c => c.end >= from);
+  sel.forEach(c => { const d = rb.el.get(c.id); if (d) { d.classList.add('flash'); setTimeout(() => d.classList.remove('flash'), 900); } });
+  const mb = sel.reduce((a, c) => a + c.mb, 0), cover = rb.now - sel[0].start;
+  const box = document.createElement('div'); box.className = 'dump';
+  box.innerHTML = `📦 ${win ? 'begin=-15m' : 'all'} → ${sel.length} chunks · ${mb.toFixed(0)} MB · 覆盖 ${fmtMin(cover)}${win ? `（请求 15m）` : ''}`;
+  const tray = $('#rbDumps'); tray.prepend(box); while (tray.children.length > 4) tray.lastChild.remove();
+}
+$('#rbDump15').onclick = () => rbDump(15);
+$('#rbDumpAll').onclick = () => rbDump(0);
+
+/* ---------- sampler ---------- */
+const cv = $('#sampCanvas'), cx = cv.getContext('2d');
+const S = {mode: 'exec', n: 12, period: 20, t: 0, threads: [], dots: [], lastTick: 0, rr: 0, paused: false};
+const COL = {java: '#F7B98E', ncpu: '#E9CF8F', io: '#C9D8EE', park: '#E7E1D6'};
+const PROFILES = [
+  {name: 'cpu-bound', w: {java: .78, ncpu: .1, io: .02, park: .1}},
+  {name: 'web-io', w: {java: .22, ncpu: .03, io: .5, park: .25}},
+  {name: 'idle-pool', w: {java: .08, ncpu: 0, io: .02, park: .9}},
+  {name: 'codec', w: {java: .3, ncpu: .5, io: .05, park: .15}},
+  {name: 'mixed', w: {java: .45, ncpu: .05, io: .2, park: .3}}
+];
+const NAMES = ['http-nio-1','http-nio-2','http-nio-3','worker-1','worker-2','kafka-poll','lz4-codec','sched-1','pool-idle-1','pool-idle-2','grpc-1','grpc-2','batch-1','batch-2','http-nio-4','http-nio-5','worker-3','worker-4','pool-idle-3','codec-2','grpc-3','kafka-io','sched-2','batch-3'];
+const PIDX = [1,1,1,0,0,4,3,4,2,2,1,1,0,0,1,1,4,0,2,3,1,1,4,0];
+function pick(w) { let r = Math.random(), a = 0; for (const k in w) { a += w[k]; if (r <= a) return k; } return 'park'; }
+function sInit() {
+  S.t = 0; S.dots = []; S.lastTick = 0; S.rr = 0;
+  S.threads = Array.from({length: S.n}, (_, i) => ({name: NAMES[i], prof: PROFILES[PIDX[i]], segs: [], cpu: 0, acc: Math.random() * S.period, samples: 0}));
+  S.threads.forEach(th => sExtend(th, 900));
+}
+function sExtend(th, until) {
+  let t = th.segs.length ? th.segs[th.segs.length - 1].t1 : -600;
+  while (t < until) { const st = pick(th.prof.w), d = 6 + Math.random() * (st === 'park' ? 70 : 45); th.segs.push({t0: t, t1: t + d, st}); t += d; }
+}
+function sState(th, t) { for (let i = th.segs.length - 1; i >= 0; i--) { const s = th.segs[i]; if (s.t0 <= t && t < s.t1) return s.st; } return 'park'; }
+function sStep(dt) {
+  const t1 = S.t + dt;
+  S.threads.forEach(th => {
+    sExtend(th, t1 + 900);
+    while (th.segs.length && th.segs[0].t1 < S.t - 700) th.segs.shift();
+    const st = sState(th, S.t);
+    if (st === 'java' || st === 'ncpu') {
+      th.cpu += dt;
+      if (S.mode === 'cpu') { th.acc += dt; while (th.acc >= S.period) { th.acc -= S.period; th.samples++; S.dots.push({i: S.threads.indexOf(th), t: S.t, k: 'cpu'}); } }
+    }
+  });
+  if (S.mode === 'exec') {
+    while (S.lastTick + S.period <= t1) {
+      S.lastTick += S.period;
+      let javaTaken = 0, nativeTaken = 0;
+      for (let k = 0; k < S.threads.length && (javaTaken < 5 || nativeTaken < 1); k++) {
+        const i = (S.rr + k) % S.threads.length, th = S.threads[i], st = sState(th, S.lastTick);
+        if (st === 'java' && javaTaken < 5) { javaTaken++; th.samples++; S.dots.push({i, t: S.lastTick, k: 'java'}); }
+        else if ((st === 'ncpu' || st === 'io') && nativeTaken < 1) { nativeTaken++; S.dots.push({i, t: S.lastTick, k: 'native'}); }
+      }
+      S.rr = (S.rr + 5) % S.threads.length;
+    }
+  } else S.lastTick = t1;
+  S.t = t1;
+  S.dots = S.dots.filter(d => d.t > S.t - 700);
+}
+function sDraw() {
+  const dpr = devicePixelRatio || 1, W = cv.clientWidth, rowH = Math.min(26, 330 / S.n), H = S.n * rowH + 50;
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + 'px'; }
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, W, H);
+  const narrow = W < 640, bw = narrow ? 60 : 150, L = narrow ? 76 : 92, R = W - bw - 40, span = 600, X = t => L + (t - (S.t - span)) / span * (R - L);
+  cx.font = (narrow ? '9px' : '10.5px') + ' "JetBrains Mono", monospace'; cx.textBaseline = 'middle';
+  cx.fillStyle = '#6E7582'; cx.fillText('线程', 8, 14); cx.fillText(narrow ? '600 ms →' : '时间轴（最近 600 ms）→', L, 14);
+  cx.fillText(narrow ? 'CPU' : '真实 CPU 占比', R + 18, 14); cx.fillStyle = S.mode === 'cpu' ? '#0F766E' : '#E8590C'; cx.fillText(narrow ? '/样本' : '/ 样本占比', R + (narrow ? 40 : 106), 14);
+  const totalCpu = S.threads.reduce((a, t) => a + t.cpu, 0) || 1, totalS = S.threads.reduce((a, t) => a + t.samples, 0) || 1;
+  S.threads.forEach((th, i) => {
+    const y = 30 + i * rowH, h = rowH - 6;
+    cx.fillStyle = '#3B4555'; cx.fillText(th.name, 8, y + h / 2);
+    th.segs.forEach(s => {
+      const a = Math.max(L, X(s.t0)), b = Math.min(R, X(s.t1)); if (b <= a) return;
+      cx.fillStyle = COL[s.st]; cx.fillRect(a, y, b - a - .5, h);
+    });
+    const cpuW = th.cpu / totalCpu * bw * 2.2, sW = th.samples / totalS * bw * 2.2;
+    cx.fillStyle = '#E7E1D6'; cx.fillRect(R + 18, y + 1, Math.min(bw, cpuW), h / 2 - 1);
+    cx.fillStyle = S.mode === 'cpu' ? '#0F766E' : '#E8590C'; cx.fillRect(R + 18, y + h / 2 + 1, Math.min(bw, sW), h / 2 - 1);
+  });
+  if (S.mode === 'exec') {
+    for (let t = Math.ceil((S.t - span) / S.period) * S.period; t <= S.t; t += S.period) {
+      const x = X(t); cx.strokeStyle = 'rgba(232,89,12,.16)'; cx.lineWidth = 1; cx.beginPath(); cx.moveTo(x, 24); cx.lineTo(x, 30 + S.n * rowH); cx.stroke();
+    }
+  }
+  S.dots.forEach(d => {
+    const x = X(d.t); if (x < L) return;
+    const y = 30 + d.i * rowH + (rowH - 6) / 2;
+    cx.beginPath(); cx.arc(x, y, Math.max(2.6, rowH * .17), 0, Math.PI * 2);
+    cx.fillStyle = d.k === 'java' ? '#E8590C' : d.k === 'native' ? '#2B5C9E' : '#0F766E'; cx.fill();
+    cx.strokeStyle = '#fff'; cx.lineWidth = 1.2; cx.stroke();
+  });
+  cx.strokeStyle = '#E8590C'; cx.lineWidth = 1.5; cx.beginPath(); cx.moveTo(R, 24); cx.lineTo(R, 30 + S.n * rowH); cx.stroke();
+}
+function sNote() {
+  const totalCpu = S.threads.reduce((a, t) => a + t.cpu, 0) || 1, totalS = S.threads.reduce((a, t) => a + t.samples, 0) || 1;
+  const err = S.threads.reduce((a, t) => a + Math.abs(t.cpu / totalCpu - t.samples / totalS), 0) / 2;
+  const javaRunning = S.threads.filter(th => sState(th, S.t) === 'java').length;
+  $('#sampNote').innerHTML = S.mode === 'exec'
+    ? `当前处于 Java 状态的线程：<b>${javaRunning}</b>，每周期最多采 <b>5</b> 个。样本分布与真实 CPU 分布的偏差（总变差距离）：<b style="color:var(--orange)">${(err * 100).toFixed(1)}%</b>。注意 native 阻塞 IO 线程也会产生蓝色 native 样本。`
+    : `每个线程每消耗 <b>${S.period} ms</b> CPU 时间触发一次采样，off-CPU 时段不产生样本。偏差：<b style="color:var(--teal)">${(err * 100).toFixed(1)}%</b>（随时间趋近于 0）。`;
+}
+let sLast = performance.now(), sNoteT = 0;
+(function sLoop(ts) {
+  const dt = Math.min(60, ts - sLast); sLast = ts;
+  if (!S.paused) sStep(dt * .12);
+  sDraw();
+  if (ts - sNoteT > 500) { sNote(); sNoteT = ts; }
+  requestAnimationFrame(sLoop);
+})(sLast);
+$$('#sampMode button').forEach(b => b.onclick = () => { $$('#sampMode button').forEach(x => x.classList.remove('on')); b.classList.add('on'); S.mode = b.dataset.m; sInit(); });
+$('#sampN').oninput = e => { S.n = +e.target.value; $('#sampNO').textContent = S.n; sInit(); };
+$('#sampP').oninput = e => { S.period = +e.target.value; $('#sampPO').textContent = S.period + ' ms'; sInit(); };
+$('#sampPause').onclick = e => { S.paused = !S.paused; e.target.textContent = S.paused ? '继续' : '暂停'; };
+sInit();
+
+/* ---------- builder ---------- */
+const B = id => $('#b_' + id);
+const PRESETS = {
+  prod: {name: 'continuous', settings: 'default', maxage: '6h', maxsize: '2g', duration: '', filename: '/data/jfr/exit-%p-%t.jfr', method: '', alloc: '', gc: '', leak: '', lock: '', depth: '128', exit: true, preserve: true, repo: true, exc: false, cpu: false},
+  cpu: {name: 'cpu', settings: 'profile', maxage: '', maxsize: '', duration: '5m', filename: '/data/jfr/cpu-%p-%t.jfr', method: 'max', alloc: 'off', gc: 'normal', leak: 'off', lock: '', depth: '256', exit: false, preserve: false, repo: false, exc: false, cpu: false},
+  lat: {name: 'latency', settings: 'profile', maxage: '30m', maxsize: '1g', duration: '', filename: '/data/jfr/lat-%p-%t.jfr', method: 'high', alloc: '', gc: 'detailed', leak: '', lock: '2ms', depth: '128', exit: true, preserve: false, repo: false, exc: false, cpu: false},
+  leak: {name: 'leak', settings: 'default', maxage: '', maxsize: '', duration: '2h', filename: '/data/jfr/leak-%p-%t.jfr', method: 'normal', alloc: 'low', gc: 'detailed', leak: 'gc-roots', lock: '', depth: '128', exit: true, preserve: false, repo: false, exc: false, cpu: false},
+  alloc: {name: 'alloc', settings: 'profile', maxage: '', maxsize: '', duration: '3m', filename: '/data/jfr/alloc-%p-%t.jfr', method: 'normal', alloc: 'high', gc: 'detailed', leak: '', lock: '', depth: '128', exit: false, preserve: false, repo: false, exc: false, cpu: false},
+  jdk25: {name: 'cputime', settings: 'default', maxage: '', maxsize: '', duration: '5m', filename: '/data/jfr/cputime-%p-%t.jfr', method: '', alloc: '', gc: '', leak: '', lock: '', depth: '128', exit: false, preserve: false, repo: false, exc: false, cpu: true}
+};
+const FIELDS = ['name','settings','maxage','maxsize','duration','filename','method','alloc','gc','leak','lock','depth'];
+const CHECKS = ['exit','preserve','repo','exc','cpu'];
+function build() {
+  const v = k => B(k).value.trim(), c = k => B(k).checked;
+  const opts = [];
+  const push = (k, val) => { if (val) opts.push(`${k}=${val}`); };
+  push('name', v('name')); push('settings', v('settings'));
+  push('maxage', v('maxage')); push('maxsize', v('maxsize')); push('duration', v('duration'));
+  push('method-profiling', v('method')); push('allocation-profiling', v('alloc')); push('gc', v('gc'));
+  push('memory-leaks', v('leak')); push('locking-threshold', v('lock'));
+  if (c('exc')) opts.push('exceptions=all');
+  if (c('cpu')) opts.push('jdk.CPUTimeSample#enabled=true', 'jdk.CPUTimeSample#throttle=10ms');
+  if (c('exit')) opts.push('dumponexit=true');
+  if (v('leak') === 'gc-roots') opts.push('path-to-gc-roots=true');
+  push('filename', v('filename'));
+  const fro = [];
+  if (c('repo')) fro.push('repository=/data/jfr/repo');
+  if (v('depth') && v('depth') !== '64') fro.push('stackdepth=' + v('depth'));
+  if (c('preserve')) fro.push('preserve-repository=true');
+  let jvm = `-XX:StartFlightRecording:${opts.join(',')}`;
+  if (fro.length) jvm += `\n-XX:FlightRecorderOptions:${fro.join(',')}`;
+  $('#outJvm').innerHTML = highlight(jvm, 'sh');
+  const jc = opts.filter(o => !o.startsWith('dumponexit')).join(' ');
+  let jcmd = `jcmd <pid> JFR.start ${jc}`;
+  if (c('repo')) jcmd = `jcmd <pid> JFR.configure repositorypath=/data/jfr/repo\n` + jcmd;
+  jcmd += `\njcmd <pid> JFR.dump name=${v('name') || '1'} begin=-15m filename=/data/jfr/snap-%t.jfr`;
+  $('#outJcmd').innerHTML = highlight(jcmd, 'sh');
+  const notes = [];
+  if (!v('maxage') && !v('maxsize') && !v('duration')) notes.push('⚠ 未设置 maxage / maxsize / duration，将使用默认 maxsize=250MB。');
+  if (v('method') === 'max') notes.push('⚠ method-profiling=max 为 1 ms 采样周期，开销明显，务必配合 duration 短时使用。');
+  if (v('gc') === 'all') notes.push('⚠ gc=all 会开启 ObjectCount，在每个 chunk 边界触发堆遍历，造成明显停顿。');
+  if (c('exc')) notes.push('⚠ exceptions=all：异常驱动控制流的应用中开销可能很高。');
+  if (v('leak') === 'gc-roots') notes.push('ℹ path-to-gc-roots 在录制结束时于 safepoint 内计算，大堆请选择低峰期。');
+  if (c('cpu')) notes.push('ℹ CPUTimeSample 为 JDK 25 实验特性，仅支持 Linux；分析：jfr view cpu-time-hot-methods。');
+  if (+v('depth') > 64) notes.push('ℹ stackdepth 只能在 JFR 初始化前设置，jcmd 无法修改已运行 JVM 的栈深。');
+  $('#bNote').innerHTML = notes.join('<br>');
+}
+FIELDS.forEach(k => B(k).addEventListener('input', build));
+CHECKS.forEach(k => B(k).addEventListener('change', build));
+$$('#presets button').forEach(b => b.onclick = () => {
+  const p = PRESETS[b.dataset.p];
+  FIELDS.forEach(k => B(k).value = p[k]); CHECKS.forEach(k => B(k).checked = p[k]);
+  $$('#presets button').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); build();
+});
+$('#copyBuilder').onclick = e => navigator.clipboard?.writeText($('#outJvm').textContent).then(() => { e.target.textContent = '已复制 ✓'; setTimeout(() => e.target.textContent = '复制启动参数', 1400); });
+$('#presets button').click();
+
+/* ---------- tabs ---------- */
+function wireTabs(root = document) {
+  $$('.tabs[data-tabs]', root).forEach(tabs => {
+    const panes = $(`.panes[data-panes="${tabs.dataset.tabs}"]`);
+    $$('.tab', tabs).forEach(t => t.onclick = () => {
+      $$('.tab', tabs).forEach(x => x.classList.toggle('on', x === t));
+      $$('.pane', panes).forEach(p => p.classList.toggle('on', p.dataset.p === t.dataset.t));
+    });
+  });
+}
+
+/* ---------- catalog ---------- */
+const CAT = [
+  ['jdk.ExecutionSample','CPU','20 ms','10 ms','线程处于 Java 状态时采栈，每周期最多 5 个线程。method-profiling 的 high = 10 ms，max = 1 ms（模板标注为高开销）。','只看 on-CPU 的 Java 代码；线程多时覆盖不足，配合 ThreadCPULoad 交叉验证。'],
+  ['jdk.NativeMethodSample','CPU','20 ms','20 ms','线程处于 native 状态时采栈，每周期 1 个。','阻塞在 socket/epoll 的线程同样算 native，不等于 CPU 消耗。'],
+  ['jdk.CPUTimeSample','CPU','关','关','JDK 25 · JEP 509 · Linux。按线程 CPU 时间触发采样，throttle 支持 500/s 或 10ms。','配合 jdk.CPUTimeSamplesLost 检查丢样；视图 cpu-time-hot-methods。'],
+  ['jdk.CPULoad','CPU','1 s','1 s','jvmUser / jvmSystem / machineTotal。','machineTotal 高而 jvm* 低，说明是邻居进程或宿主机争用。'],
+  ['jdk.ThreadCPULoad','CPU','10 s','10 s','每线程 user / system CPU 占比。','GC、JIT 线程的 CPU 只能在这里看到。'],
+  ['jdk.ObjectAllocationSample','分配','150/s','300/s','节流的分配采样，weight 表示该样本代表的字节数。','JDK 16+ 首选分配分析事件；allocation-profiling=high 时为 1000/s。'],
+  ['jdk.ObjectAllocationInNewTLAB','分配','关','关','新 TLAB 分配时记录，仅 gc=high / all 开启。','高分配率下事件量巨大，仅短时开启。'],
+  ['jdk.ObjectAllocationOutsideTLAB','分配','关','关','TLAB 外分配（大对象、humongous 等）。','G1 humongous 分配排查的直接证据。'],
+  ['jdk.OldObjectSample','泄漏','开（无栈）','开（带栈）','对存活时间长的对象采样，可计算到 GC Root 的引用链。','memory-leaks=gc-roots 或 dump 时 path-to-gc-roots=true。'],
+  ['jdk.GarbageCollection','GC','开','开','每次 GC 的名称、原因、总停顿、最长停顿。','先看 cause：Allocation Failure / G1 Humongous / System.gc()。'],
+  ['jdk.GCPhasePause','GC','开','开','STW 阶段及其耗时，阈值 0 ms。','gc-pauses、gc-pause-phases 视图。'],
+  ['jdk.GCHeapSummary','GC','开','开','GC 前后堆使用。','只看 After GC 的 heapUsed 趋势判断是否存在泄漏。'],
+  ['jdk.ObjectCount','GC','关','关','堆直方图，仅 gc=all 开启，period=everyChunk。','每个 chunk 都会触发堆遍历，生产环境禁止开启。'],
+  ['jdk.SafepointBegin','运行时','> 10 ms','> 0 ms','safepoint 开始，配合 SafepointStateSynchronization 看 TTSP。','TTSP 长通常源于大型计数循环或长时间的 JNI 临界区。'],
+  ['jdk.ExecuteVMOperation','运行时','> 10 ms','> 0 ms','VM 操作（GC、偏向撤销、类重定义等）及其耗时。','vm-operations 视图；排查非 GC 的 STW。'],
+  ['jdk.JavaMonitorEnter','锁','> 20 ms','> 10 ms','synchronized 进入等待。','contention-by-site / contention-by-class 视图。'],
+  ['jdk.JavaMonitorWait','锁','> 20 ms','> 10 ms','Object.wait() 等待。','包含正常的空闲等待，需结合栈判断。'],
+  ['jdk.ThreadPark','锁','> 20 ms','> 10 ms','LockSupport.park，即 j.u.c 锁和队列。','线程池空闲的 take() 会产生大量噪声，按 parkedClass 和栈过滤。'],
+  ['jdk.JavaMonitorInflate','锁','关','> 10 ms','轻量锁膨胀为重量锁。','膨胀频繁说明竞争模式发生变化。'],
+  ['jdk.VirtualThreadPinned','虚拟线程','> 20 ms','> 20 ms','虚拟线程阻塞时无法卸载（被钉住）。','pinned-threads 视图；JDK 24 起 synchronized 不再导致钉住。'],
+  ['jdk.SocketRead','IO','> 20 ms','> 10 ms','Socket 读阻塞，含 host、port、bytesRead。','socket-reads-by-host 视图，快速定位慢下游。'],
+  ['jdk.FileRead','IO','> 20 ms','> 10 ms','文件读阻塞。','file-reads-by-path；注意日志同步刷盘。'],
+  ['jdk.JavaErrorThrow','异常','开','开','Error 抛出（OOM、StackOverflow 等）。','几乎零成本，务必保持开启。'],
+  ['jdk.JavaExceptionThrow','异常','关','关','所有 Throwable 构造，仅 exceptions=all 开启。','开销高，短时开启；常规用 ExceptionStatistics 看速率。'],
+  ['jdk.ExceptionStatistics','异常','1 s','1 s','累计抛出的 Throwable 数量。','速率突增是异常风暴的早期信号。'],
+  ['jdk.Compilation','JIT','> 1000 ms','> 100 ms','JIT 编译耗时、层级、代码大小。','longest-compilations 视图。'],
+  ['jdk.Deoptimization','JIT','开（无栈）','开（带栈）','去优化的原因与动作。','deoptimizations-by-reason / by-site；发布后 CPU 抖动时必看。'],
+  ['jdk.CodeCacheFull','JIT','开','开','CodeCache 满，编译被停止。','出现即严重问题，调大 ReservedCodeCacheSize。'],
+  ['jdk.ContainerCPUThrottling','容器','30 s','30 s','cgroup CPU 限流次数与时长。','周期性约 100 ms 的毛刺对应 CFS 调度周期。'],
+  ['jdk.ContainerMemoryUsage','容器','30 s','30 s','cgroup 内存使用。','结合 NativeMemoryUsage 排查 RSS 超限被 OOMKilled。'],
+  ['jdk.NativeMemoryUsage','内存','1 s','1 s','JDK 20+，NMT 分类内存，需要 -XX:NativeMemoryTracking。','native-memory-committed 视图。'],
+  ['jdk.ThreadDump','线程','everyChunk','60 s','周期性全线程栈转储。','卡死时间点前后的线程状态对比。'],
+  ['jdk.MethodTrace','方法','关','关','JDK 25 · JEP 520。字节码插桩，按 filter 记录每次调用与栈。','只对精确目标开启。'],
+  ['jdk.MethodTiming','方法','关','关','JDK 25 · JEP 520。按 filter 统计调用次数与平均、最大耗时。','method-timing 视图。']
+];
+const CATS = ['全部', ...new Set(CAT.map(r => r[1]))];
+let catSel = '全部';
+const chips = $('#catChips');
+CATS.forEach(c => { const b = document.createElement('button'); b.className = 'chip' + (c === '全部' ? ' on' : ''); b.textContent = c; b.onclick = () => { catSel = c; $$('.chip', chips).forEach(x => x.classList.toggle('on', x === b)); renderCat(); }; chips.appendChild(b); });
+const vcls = v => /^关/.test(v) ? 'v-off' : 'v-on';
+function renderCat() {
+  const q = $('#catQ').value.trim().toLowerCase();
+  const tb = $('#catTbl tbody'); tb.innerHTML = '';
+  CAT.filter(r => (catSel === '全部' || r[1] === catSel) && (!q || r.join(' ').toLowerCase().includes(q))).forEach(r => {
+    const tr = document.createElement('tr'); tr.className = 'cat-row'; tr.style.cursor = 'pointer';
+    tr.innerHTML = `<td><code>${r[0]}</code></td><td><span class="tag">${r[1]}</span></td><td class="${vcls(r[2])}">${r[2]}</td><td class="${vcls(r[3])}">${r[3]}</td><td style="font-size:13px;color:var(--ink-2)">${r[4]}</td>`;
+    const ex = document.createElement('tr'); ex.style.display = 'none';
+    ex.innerHTML = `<td colspan="5" style="background:#FFF8EF;font-size:13.5px"><b style="color:var(--orange)">实战要点 ▸</b> ${r[5]}</td>`;
+    tr.onclick = () => { ex.style.display = ex.style.display === 'none' ? '' : 'none'; };
+    tb.append(tr, ex);
+  });
+}
+$('#catQ').oninput = renderCat; renderCat();
+
+/* ---------- flame graph ---------- */
+const N = (name, t, self, ch = []) => ({name, t, self, ch});
+const FG = N('all', 'jdk', 0, [
+  N('java.lang.Thread.run', 'jdk', 0, [
+    N('ThreadPoolExecutor$Worker.run', 'jdk', 0, [
+      N('ThreadPoolExecutor.runWorker', 'jdk', 0, [
+        N('NioEndpoint$SocketProcessor.doRun', 'lib', 6, [
+          N('CoyoteAdapter.service', 'lib', 4, [
+            N('DispatcherServlet.doDispatch', 'lib', 12, [
+              N('OrderController.place', 'app', 6, [
+                N('OrderService.validate', 'app', 8, [
+                  N('RiskEngine.score', 'app', 10, [
+                    N('Pattern.compile', 'jdk', 70, [N('Pattern.expr', 'jdk', 46)]),
+                    N('Pattern.matcher', 'jdk', 6, [N('Matcher.find', 'jdk', 238, [N('Pattern$Loop.match', 'jdk', 72)])]),
+                    N('RuleSet.evaluate', 'app', 96),
+                    N('HashMap.get', 'jdk', 28)
+                  ])
+                ]),
+                N('OrderService.persist', 'app', 6, [
+                  N('HikariProxyPreparedStatement.executeUpdate', 'lib', 4, [
+                    N('ClientPreparedStatement.executeInternal', 'lib', 22, [N('NativeProtocol.sendCommand', 'lib', 34)])
+                  ])
+                ]),
+                N('ObjectMapper.writeValueAsString', 'lib', 8, [
+                  N('BeanSerializer.serialize', 'lib', 112, [N('StringBuilder.append', 'jdk', 26)])
+                ])
+              ]),
+              N('OrderController.query', 'app', 4, [
+                N('CacheClient.get', 'app', 6, [N('LZ4Decompressor.decompress', 'lib', 88)]),
+                N('ObjectMapper.readValue', 'lib', 44)
+              ])
+            ])
+          ])
+        ])
+      ])
+    ]),
+    N('KafkaConsumer.poll', 'lib', 10, [N('Fetcher.collectFetch', 'lib', 18, [N('RecordBatch.iterator', 'lib', 30)])])
+  ]),
+  N('VirtualThread.run', 'jdk', 0, [N('Continuation.enter', 'jdk', 2, [N('ReportJob.render', 'app', 12, [N('TemplateEngine.process', 'lib', 64)])])])
+]);
+(function prep(n, p, d) { n.parent = p; n.depth = d; n.v = n.self + n.ch.reduce((a, c) => a + prep(c, n, d + 1), 0); return n.v; })(FG, null, 0);
+let maxD = 0; (function md(n) { maxD = Math.max(maxD, n.depth); n.ch.forEach(md); })(FG);
+const fgEl = $('#fg'), tip = $('#fgTip'), ROW = 23;
+fgEl.style.height = (maxD + 1) * ROW + 16 + 'px';
+function hue(n) { let h = 0; for (const ch of n.name) h = (h * 31 + ch.charCodeAt(0)) % 997; const j = h % 12;
+  return n.t === 'app' ? `hsl(${18 + j} 88% ${70 - j % 5}%)` : n.t === 'lib' ? `hsl(${40 + j % 6} 80% ${70 - j % 6}%)` : `hsl(${168 + j % 10} 38% ${70 - j % 6}%)`; }
+const fgDivs = new Map();
+let focus = FG;
+function fgRender() {
+  const W = fgEl.clientWidth, seen = new Set();
+  const place = (n, x, w, anc) => {
+    let d = fgDivs.get(n);
+    if (!d) { d = document.createElement('div'); d.className = 'fg-f'; d.style.background = hue(n); d.textContent = n.name; fgEl.appendChild(d); fgDivs.set(n, d);
+      d.onclick = () => { focus = n; fgRender(); };
+      d.onmousemove = e => { tip.style.opacity = 1; tip.style.left = Math.min(e.clientX + 14, innerWidth - 390) + 'px'; tip.style.top = e.clientY + 14 + 'px';
+        tip.innerHTML = `<b>${n.name}</b><br>samples ${n.v} · ${(n.v / FG.v * 100).toFixed(1)}% total · self ${n.self}`; };
+      d.onmouseleave = () => tip.style.opacity = 0; }
+    seen.add(n);
+    d.classList.toggle('anc', anc);
+    d.style.left = x * W + 'px'; d.style.width = Math.max(0, w * W - 1) + 'px'; d.style.bottom = 8 + n.depth * ROW + 'px';
+    d.style.opacity = w * W < 2 ? 0 : '';
+    d.style.color = w * W < 34 ? 'transparent' : '';
+  };
+  for (let a = focus.parent; a; a = a.parent) place(a, 0, 1, true);
+  (function lay(n, x, w) { place(n, x, w, false); let cx = x; n.ch.forEach(c => { const cw = w * c.v / n.v; lay(c, cx, cw); cx += cw; }); })(focus, 0, 1);
+  fgDivs.forEach((d, n) => { if (!seen.has(n)) { d.style.opacity = 0; d.style.width = '0px'; } });
+  $('#fgInfo').textContent = `focus: ${focus.name} · ${focus.v} samples (${(focus.v / FG.v * 100).toFixed(1)}%)`;
+  fgSearch();
+}
+function fgSearch() {
+  const q = $('#fgQ').value.trim().toLowerCase(), isHit = n => !!q && n.name.toLowerCase().includes(q);
+  fgDivs.forEach((d, n) => d.classList.toggle('hit', isHit(n)));
+  const hit = (function sumTop(n) { return isHit(n) ? n.v : n.ch.reduce((a, c) => a + sumTop(c), 0); })(focus);
+  if (q) $('#fgInfo').textContent += ` · 匹配 ${hit} samples`;
+}
+$('#fgQ').oninput = fgRender;
+$('#fgReset').onclick = () => { focus = FG; $('#fgQ').value = ''; fgRender(); };
+addEventListener('resize', fgRender);
+fgRender();
+
+/* ---------- playbooks ---------- */
+const PB = [
+  {k: 'cpu', t: 'CPU 飙高', sym: '容器 CPU 打满、RT 整体上移，但 GC 日志正常。',
+   steps: ['<code>jfr view cpu-load</code>：对比 jvmUser 与 machineTotal，先排除邻居或宿主机争用。', '<code>jfr view thread-cpu-load</code>：定位是业务线程、GC 线程（<code>GC Thread#</code>、<code>G1 Conc#</code>）还是 <code>C2 CompilerThread</code>。', '业务线程 → <code>jfr view hot-methods</code> 并看火焰图平顶；GC 线程 → 转到"分配压力"剧本；编译线程 → 转到"JIT 抖动"剧本。', '线程数远大于 5 时，可短时用 <code>method-profiling=max</code>（1 ms 周期，开销高）提高覆盖率；JDK 25 on Linux 优先启用 <code>jdk.CPUTimeSample</code>，或用 async-profiler 交叉验证。'],
+   sig: [['o', 'ExecutionSample 集中在少数帧', '算法或正则热点'], ['g', 'GC 线程 CPU > 30%', '分配或晋升压力'], ['b', 'CompilerThread 持续高', '去优化与重编译循环']],
+   cmd: 'jcmd <pid> JFR.start name=cpu settings=profile method-profiling=max duration=3m filename=/tmp/cpu.jfr\njfr view --width 200 hot-methods /tmp/cpu.jfr\njfr view thread-cpu-load /tmp/cpu.jfr'},
+  {k: 'lat', t: '延迟毛刺 P99', sym: '平均 RT 正常，P99/P999 周期性或随机飙升。',
+   steps: ['先排除 JVM 全局停顿：<code>gc-pauses</code>、<code>safepoints</code>、<code>vm-operations</code>，把停顿时间点与毛刺时间点对齐。', '再看应用级阻塞：<code>latencies-by-type</code> 一次给出 ThreadPark、MonitorEnter、SocketRead、FileRead 的分布。', '把 locking-threshold、socket-threshold 降到 1–5 ms，否则 19 ms 的等待全是盲区。', '用带 traceId 的自定义事件，在 JMC 时间轴上把慢请求和同时刻的 JVM 事件放在一起看。'],
+   sig: [['r', 'SafepointBegin 中 TTSP 很长', '计数循环或 JNI 临界区'], ['o', 'SocketRead 集中在某个 host', '慢下游或连接池耗尽'], ['b', 'ContainerCPUThrottling 增长', 'CFS 限流导致的约 100 ms 毛刺']],
+   cmd: 'jcmd <pid> JFR.start name=lat settings=profile locking-threshold=2ms socket-threshold=2ms file-threshold=2ms duration=10m filename=/tmp/lat.jfr\njfr view latencies-by-type /tmp/lat.jfr\njfr view safepoints /tmp/lat.jfr'},
+  {k: 'leak', t: '内存泄漏', sym: 'After GC 的老年代占用持续爬升，Full GC 后无法回落。',
+   steps: ['用 <code>jdk.GCHeapSummary</code>（when = After GC）确认趋势，排除缓存预热。', '常驻录制保持 <code>memory-leaks=stack-traces</code>，OldObjectSample 会记录对象分配栈。', '低峰期执行 <code>JFR.dump path-to-gc-roots=true</code> 计算引用链。注意该过程在 safepoint 中进行。', '<code>memory-leaks-by-class</code> / <code>memory-leaks-by-site</code> 找嫌疑；JMC 的 Memory Leak 页面可展开引用链。'],
+   sig: [['o', 'OldObjectSample 集中于某个集合类', '无界缓存或监听器未注销'], ['g', '对象 age 持续增大', '长期存活且不断累积'], ['t', '堆稳定但 RSS 增长', '转到 NativeMemoryUsage（非堆泄漏）']],
+   cmd: 'jcmd <pid> JFR.dump name=continuous path-to-gc-roots=true filename=/tmp/leak.jfr\njfr view memory-leaks-by-class /tmp/leak.jfr\njfr view memory-leaks-by-site /tmp/leak.jfr'},
+  {k: 'alloc', t: '分配压力 / GC 频繁', sym: 'Young GC 频率高、GC 线程 CPU 高，或频繁出现 humongous 分配。',
+   steps: ['<code>gc</code> 视图：看 GC 频率、cause 和晋升量。', '<code>allocation-by-site</code> 与 <code>allocation-by-class</code>：ObjectAllocationSample 的 weight 已按采样率放大，可近似当作真实字节数。', '<code>thread-allocation</code>：找到分配大户线程。', '短时用 <code>gc=high</code> 开启 TLAB 外分配事件，核实大数组和 humongous 对象来源。'],
+   sig: [['o', 'byte[] / char[] 占比高', '序列化、日志拼接、缓冲区未复用'], ['r', 'cause = G1 Humongous Allocation', '大对象超过 region 的一半'], ['g', 'PromotionFailed / EvacuationFailed', '老年代不足或晋升过快']],
+   cmd: 'jcmd <pid> JFR.start name=alloc allocation-profiling=high gc=detailed duration=3m filename=/tmp/alloc.jfr\njfr view allocation-by-site /tmp/alloc.jfr\njfr view thread-allocation /tmp/alloc.jfr'},
+  {k: 'lock', t: '锁竞争', sym: '吞吐上不去、CPU 不高，线程大量处于 BLOCKED / WAITING 状态。',
+   steps: ['<code>contention-by-site</code>、<code>contention-by-class</code>：synchronized 竞争（JavaMonitorEnter）。', 'ThreadPark 覆盖 j.u.c 锁，但线程池空闲的 <code>take()</code>/<code>poll()</code> 会产生大量噪声，按 parkedClass 和栈过滤。', '<code>contention-by-address</code> 区分"同一把锁"与"同一类的多把锁"，两者的修复方式不同。', '把锁阈值降到 1 ms，并开启 <code>jdk.JavaMonitorInflate</code> 观察锁膨胀频率。'],
+   sig: [['o', '单一 monitor 地址占绝大多数', '全局锁，改为分段锁或无锁结构'], ['b', 'parkedClass = ReentrantLock$NonfairSync', 'j.u.c 显式锁竞争'], ['g', '日志 Appender 出现在栈中', '同步日志刷盘']],
+   cmd: 'jcmd <pid> JFR.start name=lock locking-threshold=1ms duration=5m filename=/tmp/lock.jfr\njfr view contention-by-site /tmp/lock.jfr\njfr print --events jdk.ThreadPark --stack-depth 15 /tmp/lock.jfr'},
+  {k: 'vt', t: '虚拟线程钉住', sym: '迁移到虚拟线程后吞吐反而下降，载体线程耗尽。',
+   steps: ['<code>pinned-threads</code> 视图：按栈聚合 VirtualThreadPinned（默认阈值 20 ms）。', 'JDK 21–23：synchronized 内的阻塞是主要原因；JDK 24 起（JEP 491）不再因 synchronized 钉住。', '剩余的钉住来源：native 帧或 FFM upcall 中阻塞、类初始化期间阻塞。', '检查 <code>jdk.VirtualThreadSubmitFailed</code>，确认调度器是否过载。'],
+   sig: [['o', '栈中出现 synchronized + IO', '升级 JDK 24+ 或改用 ReentrantLock'], ['b', '栈中出现 native 方法', 'JNI 调用中阻塞'], ['r', 'SubmitFailed 出现', '调度器饱和']],
+   cmd: 'jfr view pinned-threads app.jfr\njfr print --events jdk.VirtualThreadPinned --stack-depth 30 app.jfr'},
+  {k: 'jit', t: 'JIT 抖动', sym: '发布或流量切换后 CPU 呈锯齿状、RT 抖动，持续数分钟。',
+   steps: ['<code>deoptimizations-by-reason</code>：unstable_if、class_check、null_check 等原因的计数。', '<code>deoptimizations-by-site</code>：定位反复去优化的方法，配合 profile 模板拿到栈。', '<code>longest-compilations</code>、<code>compiler-statistics</code>：确认是否出现编译风暴。', '确认 CodeCacheFull 未发生；必要时调整预热策略（流量渐进、AOT/CDS、JDK 24+ AOT cache）。'],
+   sig: [['o', '同一方法反复 make not entrant', '类型 profile 不稳定（多态爆炸）'], ['r', 'CodeCacheFull', '编译停止，性能断崖'], ['g', '编译耗时 > 1 s', '超大方法，考虑拆分']],
+   cmd: 'jcmd <pid> JFR.start name=jit compiler=detailed settings=profile duration=5m filename=/tmp/jit.jfr\njfr view deoptimizations-by-reason /tmp/jit.jfr\njfr view longest-compilations /tmp/jit.jfr'},
+  {k: 'ctr', t: '容器限流 / OOMKilled', sym: '容器内 RT 周期性毛刺，或 Pod 被 OOMKilled 但堆远未用满。',
+   steps: ['<code>container-configuration</code>：确认 JVM 识别到的 CPU 配额与内存上限。', '<code>container-cpu-throttling</code>：throttled 时长持续增长时，毛刺往往与 CFS 周期（默认 100 ms）对齐。', '<code>container-memory-usage</code> 对比堆大小，差值即非堆部分：元空间、线程栈、直接内存、CodeCache、GC 结构。', '开启 <code>-XX:NativeMemoryTracking=summary</code>，用 <code>native-memory-committed</code> 视图按类别拆分。'],
+   sig: [['r', 'throttledTime 持续增长', '提高 CPU limit 或减少 GC / JIT 线程数'], ['o', 'RSS ≫ Xmx', '直接内存、线程或 malloc 碎片'], ['b', 'activeProcessorCount 与预期不符', '检查 -XX:ActiveProcessorCount']],
+   cmd: 'jfr view container-cpu-throttling app.jfr\njfr view container-memory-usage app.jfr\njfr view native-memory-committed app.jfr'}
+];
+const pbT = $('#pbTabs'), pbP = $('#pbPanes');
+PB.forEach((p, i) => {
+  pbT.insertAdjacentHTML('beforeend', `<button class="tab${i ? '' : ' on'}" data-t="${p.k}">${p.t}</button>`);
+  pbP.insertAdjacentHTML('beforeend', `<div class="pane${i ? '' : ' on'}" data-p="${p.k}"><div class="pb">
+    <div class="card"><span class="tag r">症状</span><p style="font-size:15px;margin:10px 0 6px"><b>${p.sym}</b></p><h4>排查步骤</h4><ol>${p.steps.map(s => `<li>${s}</li>`).join('')}</ol></div>
+    <div><div class="card"><h4 style="margin-top:0">信号 → 结论</h4>${p.sig.map(([c, a, b]) => `<div class="signal"><span class="tag ${c}">${a}</span><span>→ ${b}</span></div>`).join('')}</div>
+    <div class="code"><div class="code-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">命令</span><button class="copy">复制</button></div><pre><code data-lang="sh">${esc(p.cmd)}</code></pre></div></div>
+  </div></div>`);
+});
+
+/* ---------- pitfalls ---------- */
+const PITS = [
+  ['阈值就是盲区', '默认 20 ms 的锁和 IO 阈值下，19 ms 的等待完全不可见；大量 5 ms 的等待累积起来同样会拖垮 P99。', '诊断期把阈值降到 1–5 ms，并用 latencies-by-type 看分布。'],
+  ['栈深截断', '默认 64 帧对 Spring、Reactor、Kotlin 协程远远不够，栈底被截断后无法聚合到业务入口。', '启动时设 stackdepth=128–256；RecordedStackTrace.isTruncated() 可以检测截断。'],
+  ['执行采样的线程上限', '每周期最多采 5 个 Java 线程。500 个活跃线程时，单线程的有效采样间隔被拉长百倍。', '交叉验证 ThreadCPULoad；JDK 25 使用 CPUTimeSample 或 async-profiler。'],
+  ['path-to-gc-roots 停顿', '引用链计算在 safepoint 中遍历堆，几十 GB 的堆可能停顿数秒。', '只在低峰期执行，或先 dump 不带路径的版本做初筛。'],
+  ['exceptions=all 的开销', '每个 Throwable 都会产生带栈的事件。用异常做控制流的框架（如解析器、校验库）会让开销飙升。', '常规只看 ExceptionStatistics 的速率，异常时短时开启。'],
+  ['gc=all 与 ObjectCount', 'ObjectCount 在每个 chunk 边界做一次堆直方图，等价于周期性执行 jmap -histo。', '生产环境不要用 gc=all，需要直方图时手动 jcmd GC.class_histogram。'],
+  ['录制设置会互相影响', '同一事件在多个录制中取最详细的设置，临时开启的 profile 录制会让常驻录制同步变重。', '诊断录制加 duration，用完即停。'],
+  ['dumponexit 并不可靠', 'kill -9、OOM Killer、JVM crash 都不会执行 shutdown hook。', '开启 preserve-repository 并设置 dumppath，事后用 jfr assemble 抢救 chunk。'],
+  ['repository 落在 tmpfs', '容器里 /tmp 常常是内存盘，2 GB 的 maxsize 会直接计入 Pod 内存，进而导致 OOMKilled。', 'repository 指向持久卷，并监控卷的使用率。'],
+  ['敏感信息外泄', 'InitialEnvironmentVariable、InitialSystemProperty、JVMInformation 的 jvmArguments 中常含密码和令牌。', '外发前执行 jfr scrub，或在模板中关闭相关事件。'],
+  ['ThreadPark 噪声', '线程池空闲线程在队列上 park，会被统计成"锁竞争"，误导结论。', '按 parkedClass、栈顶帧过滤，只看业务锁。'],
+  ['时间戳不是墙钟', '事件时间基于 ticks（通常是 TSC），跨机器对齐依赖 chunk header 的换算，VM 迁移或时钟跳变会引入偏差。', '跨服务对齐用自定义事件中的 traceId，而不是只靠时间戳。']
+];
+$('#pits').innerHTML = PITS.map(([h, p, f], i) => `<div class="card pit rv d${i % 3 + 1}"><div class="no">${String(i + 1).padStart(2, '0')}</div><h4>${h}</h4><p>${p}</p><div class="fix">✓ ${f}</div></div>`).join('');
+
+/* ---------- timeline ---------- */
+const TL = [
+  ['2013', 'JDK 7u40', 'Oracle JDK 商业特性，需 -XX:+UnlockCommercialFeatures。'],
+  ['2018', 'JDK 11 · JEP 328', '开源进入 OpenJDK，公开 jdk.jfr API。'],
+  ['2019', 'JDK 12', '引入 jfr 命令行工具（print / summary / metadata）。'],
+  ['2020', 'JDK 14 · JEP 349', '事件流：RecordingStream / EventStream，实现近实时消费。'],
+  ['2020', '8u262', 'JFR 向后移植到 OpenJDK 8。'],
+  ['2021', 'JDK 16', 'ObjectAllocationSample 节流分配采样；RemoteRecordingStream。'],
+  ['2021', 'JDK 17', '模板控制选项与 event#setting 上命令行；jfr configure；容器事件。'],
+  ['2022', 'JDK 19', 'jfr scrub 脱敏与过滤。'],
+  ['2023', 'JDK 21', 'jfr view / JFR.view 视图；虚拟线程事件；preserve-repository。'],
+  ['2025', 'JDK 24 · JEP 491', 'synchronized 不再钉住虚拟线程。'],
+  ['2025', 'JDK 25', 'JEP 509 CPU 时间采样 · JEP 518 协作式采样 · JEP 520 方法计时与追踪。']
+];
+$('#tl').innerHTML = TL.map(([y, v, d]) => `<div class="tl-item"><div class="tl-year">${y}</div><div class="tl-dot"></div><h5>${v}</h5><p>${d}</p></div>`).join('');
+
+/* ---------- cheat sheet ---------- */
+const CK = [
+  ['常驻录制（启动参数）', '-XX:StartFlightRecording:name=continuous,maxage=6h,maxsize=2g,dumponexit=true,filename=/data/jfr/exit-%p-%t.jfr'],
+  ['截取最近 15 分钟', 'jcmd <pid> JFR.dump name=continuous begin=-15m filename=/tmp/last15.jfr'],
+  ['临时 profile 5 分钟', 'jcmd <pid> JFR.start name=diag settings=profile duration=5m filename=/tmp/diag.jfr'],
+  ['不落盘直接看热点', 'jcmd <pid> JFR.view hot-methods'],
+  ['列出所有录制', 'jcmd <pid> JFR.check verbose=true'],
+  ['事件分布概览', 'jfr summary app.jfr'],
+  ['所有视图一次看完', 'jfr view all-views app.jfr > report.txt'],
+  ['锁阈值降到 1ms', 'jcmd <pid> JFR.start name=lock locking-threshold=1ms duration=5m filename=/tmp/lock.jfr'],
+  ['泄漏引用链', 'jcmd <pid> JFR.dump name=continuous path-to-gc-roots=true filename=/tmp/leak.jfr'],
+  ['外发前脱敏', 'jfr scrub --exclude-events InitialEnvironmentVariable,InitialSystemProperty app.jfr safe.jfr'],
+  ['抢救 repository', 'jfr assemble /data/jfr/repo/<dir> rescued.jfr'],
+  ['JDK 25 CPU 时间采样', "java '-XX:StartFlightRecording:jdk.CPUTimeSample#enabled=true,filename=cpu.jfr' -jar app.jar && jfr view cpu-time-hot-methods cpu.jfr"]
+];
+$('#cheat').innerHTML = CK.map(([d, c], i) => `<div class="ck rv d${i % 2 + 1}"><div class="d"><span>${d}</span><button class="copy">复制</button></div><pre><code data-lang="sh">${esc(c)}</code></pre></div>`).join('');
+
+hlAll(); wireTabs(); observe();
+})();
+</script>
+</body>
+</html>
