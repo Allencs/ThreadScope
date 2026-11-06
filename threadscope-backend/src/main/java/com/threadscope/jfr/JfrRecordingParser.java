@@ -61,11 +61,13 @@ public class JfrRecordingParser {
         String virtualization = null;
         JfrDocuments.ContainerInfo container = null;
         List<JfrDocuments.ThrottlePoint> throttling = new ArrayList<>();
+        JfrMemoryCollector memory = new JfrMemoryCollector(min, max, bucketCount);
 
         try (RecordingFile recording = new RecordingFile(file)) {
             while (recording.hasMoreEvents()) {
                 RecordedEvent event = recording.readEvent();
                 String name = event.getEventType().getName();
+                memory.accept(event, name);
                 switch (name) {
                     case "jdk.ExecutionSample" -> samples += onSample(event, methods, stacks, min, max, bucketCount);
                     case "jdk.ThreadDump" -> {
@@ -156,7 +158,7 @@ public class JfrRecordingParser {
                 virtualization, container, sortThrottling(throttling)));
         var summary = new JfrDocuments.Summary(jvmVersion, platforms.size(), virtual.size(), pinned);
         return new JfrDocuments.ParseResult(hotspot, threads, summary, List.copyOf(dumps),
-            max.toEpochMilli() - min.toEpochMilli());
+            max.toEpochMilli() - min.toEpochMilli(), memory.freeze(container == null ? null : container.memoryLimit()));
     }
 
     private Instant[] scanRange(Path file) {
@@ -170,7 +172,8 @@ public class JfrRecordingParser {
                 Instant time = event.getStartTime();
                 if (anyMin == null || time.isBefore(anyMin)) anyMin = time;
                 if (anyMax == null || time.isAfter(anyMax)) anyMax = time;
-                if ("jdk.ExecutionSample".equals(event.getEventType().getName())) {
+                String name = event.getEventType().getName();
+                if ("jdk.ExecutionSample".equals(name) || JfrMemoryCollector.isAllocation(name)) {
                     if (sampleMin == null || time.isBefore(sampleMin)) sampleMin = time;
                     if (sampleMax == null || time.isAfter(sampleMax)) sampleMax = time;
                 }
@@ -192,7 +195,7 @@ public class JfrRecordingParser {
         return (int) Math.min(configured, seconds);
     }
 
-    private int bucketOf(Instant time, Instant min, Instant max, int bucketCount) {
+    static int bucketOf(Instant time, Instant min, Instant max, int bucketCount) {
         if (bucketCount <= 1) return 0;
         long span = Math.max(1, max.toEpochMilli() - min.toEpochMilli());
         int index = (int) ((time.toEpochMilli() - min.toEpochMilli()) * bucketCount / span);
@@ -347,7 +350,7 @@ public class JfrRecordingParser {
     }
 
     /** 方法键带参数列表（与 jfr print 的写法一致），重载方法分开统计。 */
-    private static String methodKey(RecordedMethod method) {
+    static String methodKey(RecordedMethod method) {
         String name = methodName(method);
         return name == null ? null : name + params(method.getDescriptor());
     }
@@ -358,7 +361,7 @@ public class JfrRecordingParser {
     }
 
     /** 方法句柄、lambda form 等 @Hidden 帧；jfr print / jfr view 和 Java 异常栈默认都不显示。 */
-    private static boolean hidden(RecordedFrame frame) {
+    static boolean hidden(RecordedFrame frame) {
         RecordedMethod method = frame.getMethod();
         return method != null && method.isHidden();
     }
@@ -439,7 +442,7 @@ public class JfrRecordingParser {
         return value > 0 && value != Long.MAX_VALUE ? value : null;
     }
 
-    private static long nanosOr(RecordedEvent event, String field) {
+    static long nanosOr(RecordedEvent event, String field) {
         if (!has(event, field)) return 0;
         Duration value = event.getDuration(field);
         return value.isNegative() ? 0 : value.toNanos();
@@ -481,11 +484,11 @@ public class JfrRecordingParser {
         return event.getThread(field);
     }
 
-    private static boolean has(RecordedEvent event, String field) {
+    static boolean has(RecordedEvent event, String field) {
         return event.getEventType().getField(field) != null;
     }
 
-    private static long longOr(RecordedEvent event, String field, long fallback) {
+    static long longOr(RecordedEvent event, String field, long fallback) {
         return has(event, field) ? event.getLong(field) : fallback;
     }
 
@@ -515,25 +518,52 @@ public class JfrRecordingParser {
         }
     }
 
-    /** 方法名转成下标后按整条栈去重计数，同时记录每条栈落在哪些时间桶，用于按时间区间统计。 */
-    private static final class StackTable {
+    /** 方法键 → 下标。CPU 栈和各种分配栈可以共用一张表。 */
+    static final class FrameNames {
         private final Map<String, Integer> ids = new HashMap<>();
         private final List<String> names = new ArrayList<>();
+
+        int id(String key) {
+            return ids.computeIfAbsent(key, k -> {
+                names.add(k);
+                return names.size() - 1;
+            });
+        }
+
+        List<String> list() {
+            return List.copyOf(names);
+        }
+    }
+
+    /**
+     * 方法名转成下标后按整条栈去重累计，同时记录每条栈落在哪些时间桶，用于按时间区间统计。
+     * CPU 栈每个样本权重为 1；分配栈的权重是估算字节数，并且同一条栈按对象类型分开记。
+     */
+    static final class StackTable {
+        private final FrameNames names;
         private final Map<StackKey, StackCount> counts = new LinkedHashMap<>();
+
+        StackTable() {
+            this(new FrameNames());
+        }
+
+        StackTable(FrameNames names) {
+            this.names = names;
+        }
 
         void add(List<String> chain, boolean truncated, int bucket) {
             int[] frames = new int[chain.size()];
-            for (int i = 0; i < frames.length; i++) {
-                frames[i] = ids.computeIfAbsent(chain.get(i), key -> {
-                    names.add(key);
-                    return names.size() - 1;
-                });
-            }
-            counts.computeIfAbsent(new StackKey(frames, truncated), k -> new StackCount()).add(bucket);
+            for (int i = 0; i < frames.length; i++) frames[i] = names.id(chain.get(i));
+            add(frames, truncated, bucket, 1, -1);
+        }
+
+        /** type < 0 表示不区分类型。 */
+        void add(int[] frames, boolean truncated, int bucket, long weight, int type) {
+            counts.computeIfAbsent(new StackKey(frames, truncated, type), k -> new StackCount()).add(bucket, weight);
         }
 
         List<String> frames() {
-            return List.copyOf(names);
+            return names.list();
         }
 
         List<JfrDocuments.StackSample> freeze() {
@@ -550,15 +580,15 @@ public class JfrRecordingParser {
             long[] samples = new long[2];
             int size;
 
-            void add(int bucket) {
-                total++;
+            void add(int bucket, long weight) {
+                total += weight;
                 if (size > 0 && buckets[size - 1] == bucket) {
-                    samples[size - 1]++;
+                    samples[size - 1] += weight;
                     return;
                 }
                 int at = Arrays.binarySearch(buckets, 0, size, bucket);
                 if (at >= 0) {
-                    samples[at]++;
+                    samples[at] += weight;
                     return;
                 }
                 at = -at - 1;
@@ -569,25 +599,26 @@ public class JfrRecordingParser {
                 System.arraycopy(buckets, at, buckets, at + 1, size - at);
                 System.arraycopy(samples, at, samples, at + 1, size - at);
                 buckets[at] = bucket;
-                samples[at] = 1;
+                samples[at] = weight;
                 size++;
             }
 
             JfrDocuments.StackSample freeze(StackKey key) {
                 return new JfrDocuments.StackSample(key.frames, total, key.truncated,
-                    Arrays.copyOf(buckets, size), Arrays.copyOf(samples, size));
+                    Arrays.copyOf(buckets, size), Arrays.copyOf(samples, size), key.type < 0 ? null : key.type);
             }
         }
 
-        private record StackKey(int[] frames, boolean truncated) {
+        private record StackKey(int[] frames, boolean truncated, int type) {
             @Override
             public boolean equals(Object o) {
-                return o instanceof StackKey other && truncated == other.truncated && Arrays.equals(frames, other.frames);
+                return o instanceof StackKey other && truncated == other.truncated && type == other.type
+                    && Arrays.equals(frames, other.frames);
             }
 
             @Override
             public int hashCode() {
-                return 31 * Arrays.hashCode(frames) + (truncated ? 1 : 0);
+                return 31 * (31 * Arrays.hashCode(frames) + (truncated ? 1 : 0)) + type;
             }
         }
     }

@@ -16,15 +16,20 @@ import {
 import HintTip from '@/components/common/HintTip.vue'
 import CallerTree from '@/components/jfr/CallerTree.vue'
 import JfrCpuTrend, { type CpuTrendMethod } from '@/components/jfr/JfrCpuTrend.vue'
+import JfrMemoryPanel from '@/components/jfr/JfrMemoryPanel.vue'
+import { methodParts } from '@/utils/methodKey'
 import JfrThreadsPanel from '@/components/jfr/JfrThreadsPanel.vue'
+
+type ReportTab = 'hot' | 'memory' | 'threads' | 'dumps'
 
 const route = useRoute()
 const router = useRouter()
 const reportId = computed(() => route.params.reportId as string)
 
 const report = ref<JfrReportSummary | null>(null)
-const tab = ref<'hot' | 'threads' | 'dumps'>('hot')
+const tab = ref<ReportTab>('hot')
 const threadsVisited = ref(false)
+const memoryVisited = ref(false)
 const sort = ref<'self' | 'inclusive'>('self')
 const query = ref('')
 const hotspots = ref<JfrHotspotRow[]>([])
@@ -126,19 +131,6 @@ function percentTone(percent: number): string {
   return 'cool'
 }
 
-function methodParts(methodKey: string): { pkg: string; name: string; params: string } {
-  const hash = methodKey.indexOf('#')
-  const className = hash < 0 ? methodKey : methodKey.slice(0, hash)
-  const rest = hash < 0 ? '' : methodKey.slice(hash + 1)
-  const paren = rest.indexOf('(')
-  const method = paren < 0 ? rest : rest.slice(0, paren)
-  const params = paren < 0 ? '' : rest.slice(paren)
-  const dot = className.lastIndexOf('.')
-  const pkg = dot < 0 ? '' : className.slice(0, dot + 1)
-  const simple = dot < 0 ? className : className.slice(dot + 1)
-  return { pkg, name: method ? `${simple}.${method}` : simple, params }
-}
-
 function primary(row: JfrHotspotRow): number {
   return sort.value === 'self' ? row.selfPercent : row.inclusivePercent
 }
@@ -196,9 +188,10 @@ function toggle(row: JfrHotspotRow) {
   opened.value[row.methodKey] = !opened.value[row.methodKey]
 }
 
-function switchTab(value: 'hot' | 'threads' | 'dumps') {
+function switchTab(value: ReportTab) {
   tab.value = value
   if (value === 'threads') threadsVisited.value = true
+  if (value === 'memory') memoryVisited.value = true
 }
 
 async function openDump() {
@@ -242,6 +235,7 @@ onMounted(async () => {
       </div>
       <nav class="tabs">
         <button :class="{ on: tab === 'hot' }" @click="switchTab('hot')">热点方法</button>
+        <button :class="{ on: tab === 'memory' }" @click="switchTab('memory')">内存</button>
         <button :class="{ on: tab === 'threads' }" @click="switchTab('threads')">线程</button>
         <button :class="{ on: tab === 'dumps' }" @click="switchTab('dumps')">
           线程 Dump<span v-if="report?.threadDumpCount" class="tab-count">{{ report.threadDumpCount }}</span>
@@ -354,6 +348,8 @@ onMounted(async () => {
           <p v-if="!loading && hotspots.length === 0" class="empty">没有匹配的方法。</p>
         </div>
       </section>
+
+      <JfrMemoryPanel v-if="memoryVisited" v-show="tab === 'memory'" :report-id="reportId" :active="tab === 'memory'" />
 
       <JfrThreadsPanel v-if="threadsVisited" v-show="tab === 'threads'" :report-id="reportId" />
 

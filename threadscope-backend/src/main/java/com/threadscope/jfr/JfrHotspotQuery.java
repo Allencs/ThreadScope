@@ -19,7 +19,7 @@ public final class JfrHotspotQuery {
 
     private static final int DEPTH_LIMIT = 24;
     private static final int CHILD_LIMIT = 8;
-    private static final int NODE_BUDGET = 240;
+    static final int NODE_BUDGET = 240;
     private static final int FOLLOW_LIMIT = 3;
 
     private JfrHotspotQuery() {}
@@ -151,7 +151,7 @@ public final class JfrHotspotQuery {
         }
     }
 
-    private static List<JfrDocuments.HotspotCaller> pathCallers(JfrStackIndex index, long[] weight, Slice node,
+    static List<JfrDocuments.HotspotCaller> pathCallers(JfrStackIndex index, long[] weight, Slice node,
                                                                 boolean[] hit, int[] deepest, int depth, int[] budget) {
         if (depth > DEPTH_LIMIT || budget[0] <= 0 || node.size() == 0) return List.of();
         long total = 0;
@@ -263,17 +263,17 @@ public final class JfrHotspotQuery {
             || JfrRecordingParser.label(methodKey).toLowerCase(Locale.ROOT).contains(needle);
     }
 
-    private static String needle(String query) {
+    static String needle(String query) {
         return query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
     }
 
-    private static double percent(long part, long total) {
+    static double percent(long part, long total) {
         if (total <= 0) return 0;
         return Math.round(part * 10000.0 / total) / 100.0;
     }
 
     /** 调用者树上的一个节点：落在这条路径上的栈，以及该节点在每条栈里的位置。 */
-    private record Slice(int[] stacks, int[] positions, int size) {
+    record Slice(int[] stacks, int[] positions, int size) {
 
         /** 权重为 0 的栈（不在所选时间区间内）不进入任何节点。 */
         static Slice root(JfrStackIndex index, long[] weight, int id, boolean selfOnly) {
@@ -298,6 +298,21 @@ public final class JfrHotspotQuery {
                         break;
                     }
                 }
+            }
+            return new Slice(stacks, positions, n);
+        }
+
+        /** anchor[s] 是每条栈里指定的一帧（例如首个业务帧）的位置；只取该帧正好是 id 的栈。 */
+        static Slice anchored(JfrStackIndex index, long[] weight, int id, int[] anchor) {
+            int[] candidates = index.containing(id);
+            int[] stacks = new int[candidates.length];
+            int[] positions = new int[candidates.length];
+            int n = 0;
+            for (int stack : candidates) {
+                int at = anchor[stack];
+                if (weight[stack] == 0 || at < 0 || index.frames[stack][at] != id) continue;
+                stacks[n] = stack;
+                positions[n++] = at;
             }
             return new Slice(stacks, positions, n);
         }

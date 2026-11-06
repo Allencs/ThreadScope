@@ -3,6 +3,7 @@ package com.threadscope.jfr;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.threadscope.config.JfrProperties;
+import com.threadscope.engine.analyzer.CodeLayerClassifier;
 import com.threadscope.exception.AnalysisNotFoundException;
 import com.threadscope.exception.DumpTooLargeException;
 import com.threadscope.model.AnalysisBundle;
@@ -24,8 +25,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
@@ -50,6 +53,11 @@ public class JfrAnalysisService {
     private final Cache<String, Optional<JfrStackIndex>> indexes = Caffeine.newBuilder()
         .maximumSize(20)
         .expireAfterAccess(30, TimeUnit.MINUTES)
+        .build();
+    /** 大录制的分配栈索引能到上百 MB，只缓存最近打开的几份。 */
+    private final Cache<String, Optional<MemoryState>> memory = Caffeine.newBuilder()
+        .maximumSize(3)
+        .expireAfterAccess(20, TimeUnit.MINUTES)
         .build();
 
     public JfrAnalysisService(JfrProperties properties, JfrReportRepository repository,
@@ -160,6 +168,57 @@ public class JfrAnalysisService {
         return JfrThreadOverview.build(stored.threads(), start, start + window.durationMillis());
     }
 
+    /** 旧版报告没有内存数据时返回 null。 */
+    public JfrDocuments.MemoryOverview memory(String id) {
+        JfrReportRepository.StoredReport stored = load(id);
+        MemoryState state = memoryState(id);
+        return state == null ? null : JfrMemoryOverview.build(state.doc(), stored.threads());
+    }
+
+    /** packages 是业务包前缀，按 business 排序时用来判断哪些帧是业务代码；为空时按 JDK / 已知框架之外推断。 */
+    public JfrDocuments.AllocationList allocations(String id, String source, String query, String sort, Integer limit,
+                                                   Integer from, Integer to, String type, List<String> packages) {
+        MemoryState state = requireMemory(id);
+        JfrDocuments.AllocationProfile profile = state.profile(source);
+        if (profile == null) throw new IllegalArgumentException("这份录制没有分配调用栈");
+        int cap = limit == null ? properties.hotspotLimit() : limit;
+        return JfrAllocationQuery.list(profile, state.index(profile), query, sort, cap,
+            JfrDocuments.BucketRange.of(from, to, profile.stacks().bucketCount()), type, classifier(packages));
+    }
+
+    public List<JfrDocuments.HotspotCaller> allocationCallers(String id, String source, List<String> path, String basis,
+                                                              String query, Integer from, Integer to, String type,
+                                                              List<String> packages) {
+        MemoryState state = requireMemory(id);
+        JfrDocuments.AllocationProfile profile = state.profile(source);
+        if (profile == null) return List.of();
+        return JfrAllocationQuery.expand(profile, state.index(profile), path, basis, query,
+            JfrDocuments.BucketRange.of(from, to, profile.stacks().bucketCount()), type, classifier(packages));
+    }
+
+    /** group：stack / business；thread 按线程名包含匹配，可以填线程池前缀。 */
+    public JfrDocuments.StallReport stalls(String id, String group, String thread, Integer from, Integer to,
+                                           List<String> packages) {
+        JfrDocuments.MemoryDocument doc = requireMemory(id).doc();
+        return JfrStallQuery.report(doc, group, thread, JfrDocuments.BucketRange.of(from, to, doc.bucketCount()),
+            classifier(packages));
+    }
+
+    private static CodeLayerClassifier classifier(List<String> packages) {
+        return packages == null || packages.isEmpty() ? CodeLayerClassifier.inferring() : new CodeLayerClassifier(packages);
+    }
+
+    private MemoryState requireMemory(String id) {
+        load(id);
+        MemoryState state = memoryState(id);
+        if (state == null) throw new IllegalArgumentException("这份报告由旧版解析生成，没有内存数据，请重新上传 .jfr");
+        return state;
+    }
+
+    private MemoryState memoryState(String id) {
+        return memory.get(id, key -> repository.findMemory(key).map(MemoryState::new)).orElse(null);
+    }
+
     public JfrDocuments.PlatformThread thread(String id, long javaThreadId) {
         return load(id).threads().platform().stream()
             .filter(thread -> thread.javaThreadId() == javaThreadId)
@@ -187,6 +246,7 @@ public class JfrAnalysisService {
         repository.delete(id);
         cache.invalidate(id);
         indexes.invalidate(id);
+        memory.invalidate(id);
     }
 
     private JfrDocuments.ReportSummary analyze(Path file, String filename) throws IOException {
@@ -222,11 +282,20 @@ public class JfrAnalysisService {
             parsed.summary().jvmVersion()
         );
         var stored = new JfrReportRepository.StoredReport(summary, parsed.summary(), parsed.hotspot(), parsed.threads(), bundle);
-        repository.insert(stored);
+        repository.insert(stored, parsed.memory());
         repository.deleteExpired(now);
         cache.put(id, new JfrReportRepository.StoredReport(summary, parsed.summary(), parsed.hotspot(), parsed.threads(), null));
-        log.info("Stored JFR report {} samples={} dumps={} file={}", id, summary.sampleCount(), summary.threadDumpCount(), filename);
+        log.info("Stored JFR report {} samples={} dumps={} allocation={} file={}", id, summary.sampleCount(),
+            summary.threadDumpCount(), allocationSummary(parsed.memory()), filename);
         return summary;
+    }
+
+    private static String allocationSummary(JfrDocuments.MemoryDocument memory) {
+        if (memory == null || memory.profiles().isEmpty()) return "none";
+        return memory.profiles().stream()
+            .map(p -> p.source() + ":" + p.events() + "events/" + p.stacks().stacks().size() + "stacks")
+            .reduce((a, b) -> a + "," + b)
+            .orElse("none");
     }
 
     private JfrReportRepository.StoredReport load(String id) {
@@ -274,4 +343,23 @@ public class JfrAnalysisService {
     }
 
     public record OpenDump(String analysisId, int dumpCount) {}
+
+    /** 分配栈索引按来源懒加载，第一次查询某个来源时才构建。 */
+    private record MemoryState(JfrDocuments.MemoryDocument doc, Map<String, JfrStackIndex> indexes) {
+        MemoryState(JfrDocuments.MemoryDocument doc) {
+            this(doc, new ConcurrentHashMap<>());
+        }
+
+        /** source 为空时取第一种：有 TLAB 用 TLAB，否则用分配采样。 */
+        JfrDocuments.AllocationProfile profile(String source) {
+            return doc.profiles().stream()
+                .filter(p -> source == null || source.isBlank() || p.source().equalsIgnoreCase(source))
+                .findFirst()
+                .orElse(null);
+        }
+
+        JfrStackIndex index(JfrDocuments.AllocationProfile profile) {
+            return indexes.computeIfAbsent(profile.source(), k -> JfrStackIndex.of(profile.stacks()));
+        }
+    }
 }

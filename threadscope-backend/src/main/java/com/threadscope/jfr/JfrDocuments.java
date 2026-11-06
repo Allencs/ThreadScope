@@ -18,11 +18,18 @@ public final class JfrDocuments {
         Map<String, Long> inclusiveBuckets
     ) {}
 
-    /** 去重后的一条调用栈。frames 是 {@link HotspotDocument#frames()} 的下标，[0] 为栈顶。 */
-    public record StackSample(int[] frames, long samples, boolean truncated, int[] buckets, long[] bucketSamples) {
+    /**
+     * 去重后的一条调用栈。frames 是 {@link HotspotDocument#frames()} 的下标，[0] 为栈顶。
+     * 分配栈里 samples / bucketSamples 是估算的字节数，type 是 {@link AllocationProfile#types()} 的下标；CPU 栈的 type 为 null。
+     */
+    public record StackSample(int[] frames, long samples, boolean truncated, int[] buckets, long[] bucketSamples, Integer type) {
         /** buckets / bucketSamples 是稀疏的时间桶分布（升序），为 null 表示旧版报告，不支持按时间区间统计。 */
         public StackSample(int[] frames, long samples, boolean truncated) {
-            this(frames, samples, truncated, null, null);
+            this(frames, samples, truncated, null, null, null);
+        }
+
+        public StackSample(int[] frames, long samples, boolean truncated, int[] buckets, long[] bucketSamples) {
+            this(frames, samples, truncated, buckets, bucketSamples, null);
         }
     }
 
@@ -171,7 +178,209 @@ public final class JfrDocuments {
         ThreadDocument threads,
         Summary summary,
         List<String> threadDumps,
-        long durationMillis
+        long durationMillis,
+        MemoryDocument memory
+    ) {}
+
+    /**
+     * 一种分配事件来源的调用栈，复用热点结构：totalSamples / bucketSamples / 每条栈的 samples 都是估算的字节数，methods 为空。
+     * source：tlab = ObjectAllocationInNewTLAB（按 TLAB 大小计）+ ObjectAllocationOutsideTLAB（按对象大小计），与 JMC 的估算口径一致；
+     * sample = ObjectAllocationSample（按 weight 计，default 模板也有）。
+     * cover 是这种事件实际出现的时间范围，可能只是录制的一部分。
+     */
+    public record AllocationProfile(
+        String source,
+        long events,
+        Long coverStartEpochMs,
+        Long coverEndEpochMs,
+        List<String> types,
+        HotspotDocument stacks
+    ) {}
+
+    /** jdk.GarbageCollection。ZGC 的 duration 是并发周期长度，停顿只看 pauseNanos。 */
+    public record GcCollection(long gcId, long epochMs, String name, String cause,
+                               long durationNanos, long pauseNanos, long longestPauseNanos) {}
+
+    /** jdk.GCHeapSummary：每次 GC 前后各一条。 */
+    public record HeapPoint(long epochMs, boolean afterGc, long used, long committed) {}
+
+    public record MemoryPoint(long epochMs, long value) {}
+
+    /**
+     * jdk.ZAllocationStall：ZGC 来不及回收时，分配线程被迫等待。size 是触发停顿的页分配大小，
+     * stack 是 GcDocument.stallStacks 的下标；旧版解析的报告这两个字段为 null。
+     */
+    public record StallEvent(long epochMs, long durationNanos, String thread, String type, Long size, Integer stack) {}
+
+    /** frames 是 GcDocument.stallFrames 的下标，栈顶在前。 */
+    public record StallStack(List<Integer> frames, boolean truncated) {}
+
+    public record GcDocument(
+        String youngCollector,
+        String oldCollector,
+        Long heapMax,
+        Long heapInitial,
+        List<GcCollection> collections,
+        List<HeapPoint> heap,
+        long stallCount,
+        List<StallEvent> stalls,
+        List<MemoryPoint> metaspace,
+        List<MemoryPoint> rss,
+        List<MemoryPoint> container,
+        Long containerLimit,
+        List<String> stallFrames,
+        List<StallStack> stallStacks
+    ) {}
+
+    /**
+     * 时间桶与热点一致。measuredBytes 是 jdk.ThreadAllocationStatistics 相邻两次的差值按桶累加，
+     * 是实际分配量而非估算；没有该事件时为 null。measuredIntervalMs 是它的采集间隔（中位数）。
+     */
+    public record MemoryDocument(
+        long startEpochMs,
+        long endEpochMs,
+        int bucketCount,
+        List<AllocationProfile> profiles,
+        List<Long> measuredBytes,
+        Long measuredIntervalMs,
+        GcDocument gc
+    ) {}
+
+    public record AllocationSource(String source, long events, long estimatedBytes,
+                                   Long coverStartEpochMs, Long coverEndEpochMs, List<Long> bucketBytes) {}
+
+    public record GcSummary(String name, long count, long pauseNanos, long longestPauseNanos, long durationNanos) {}
+
+    public record ThreadAllocation(String name, long bytes) {}
+
+    public record PoolAllocation(String name, long bytes, int threads, List<ThreadAllocation> top) {}
+
+    public record StallThread(String name, long count, long durationNanos) {}
+
+    public record StallFrame(String methodKey, String label, boolean business) {}
+
+    /** 一条完整的停顿调用栈。anchor 是从栈顶数第一个业务帧的位置，没有为 null。 */
+    public record StallTrace(List<StallFrame> frames, Integer anchor, boolean truncated, long count, long durationNanos) {}
+
+    public record StallEventRow(long epochMs, long durationNanos, String thread, String type, Long size) {}
+
+    /**
+     * 一组停顿：按调用栈分组时一条栈一组，按业务代码分组时同一个首业务帧的栈归为一组。
+     * traces 是组内耗时最多的几条栈，events 是组内耗时最长的几次停顿。
+     */
+    public record StallGroup(
+        String key,
+        String label,
+        boolean business,
+        long count,
+        long durationNanos,
+        long longestNanos,
+        long sizeBytes,
+        double percent,
+        int threadCount,
+        List<StallThread> threads,
+        Map<String, Long> types,
+        int stackCount,
+        List<StallTrace> traces,
+        List<StallEventRow> events
+    ) {}
+
+    /** group：stack / business。stacksAvailable=false 表示旧版解析的报告，停顿事件没有保存调用栈。 */
+    public record StallReport(
+        String group,
+        String thread,
+        Integer rangeFrom,
+        Integer rangeTo,
+        boolean stacksAvailable,
+        long count,
+        long durationNanos,
+        long longestNanos,
+        int threadCount,
+        int groupCount,
+        List<StallGroup> groups
+    ) {}
+
+    /** level：critical / warn / info。 */
+    public record MemoryFinding(String level, String title, String detail) {}
+
+    /**
+     * 内存标签页的概览。所有 List 都按热点时间桶对齐，没有数据的桶为 null。
+     * heapPeak 是桶内 GC 前后堆占用的最大值，heapFloor 是桶内 GC 后占用的最小值（存活对象的下限）。
+     */
+    public record MemoryOverview(
+        long startEpochMs,
+        long endEpochMs,
+        int bucketCount,
+        List<AllocationSource> sources,
+        List<Long> measuredBytes,
+        Long measuredIntervalMs,
+        Long measuredTotal,
+        String youngCollector,
+        String oldCollector,
+        Long heapMax,
+        List<GcSummary> collectors,
+        List<Long> gcCount,
+        List<Long> gcPauseNanos,
+        List<Long> heapPeak,
+        List<Long> heapFloor,
+        List<Long> heapCommitted,
+        long stallCount,
+        long stallNanos,
+        long longestStallNanos,
+        List<Long> stallBuckets,
+        List<Long> stallNanosBuckets,
+        List<StallThread> stallThreads,
+        List<Long> metaspace,
+        List<Long> rss,
+        List<Long> container,
+        Long containerLimit,
+        List<PoolAllocation> pools,
+        List<MemoryFinding> findings
+    ) {}
+
+    /** 分配点：栈顶方法 + 对象类型。percent 是占所在行（按当前口径）字节数的比例。 */
+    public record AllocationSite(String methodKey, String label, String type, long bytes, double percent) {}
+
+    /**
+     * attributedBytes 是"首个业务帧"口径下归到该方法的字节数：每条分配栈从栈顶往下找到的第一个业务方法记一次。
+     * 只在按业务排序时有值。
+     */
+    public record AllocationRow(
+        String methodKey,
+        String label,
+        long selfBytes,
+        long inclusiveBytes,
+        Long attributedBytes,
+        double selfPercent,
+        double inclusivePercent,
+        Double attributedPercent,
+        boolean matched,
+        boolean expand,
+        String basis,
+        List<Long> timeline,
+        List<AllocationSite> sites,
+        List<HotspotCaller> callers
+    ) {}
+
+    public record TypeRow(String name, long bytes, double percent) {}
+
+    /**
+     * totalBytes 是当前统计范围（时间区间 + 对象类型）内的估算字节数，rangeBytes 是不按类型过滤时的总量。
+     * unattributedBytes 是按业务排序时整条栈都没有业务帧的字节数。
+     */
+    public record AllocationList(
+        String source,
+        String sort,
+        long totalBytes,
+        long rangeBytes,
+        String type,
+        boolean rangeSupported,
+        Integer rangeFrom,
+        Integer rangeTo,
+        Long truncatedBytes,
+        Long unattributedBytes,
+        List<TypeRow> types,
+        List<AllocationRow> methods
     ) {}
 
     /**

@@ -9,12 +9,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 @Repository
 @Profile("!test")
@@ -33,13 +38,13 @@ public class JfrReportRepository {
         this.mapper = mapper;
     }
 
-    public void insert(StoredReport report) {
+    public void insert(StoredReport report, JfrDocuments.MemoryDocument memory) {
         jdbc.update("""
             INSERT INTO jfr_report (
                 id, original_filename, recording_start, duration_millis, sample_count,
                 thread_dump_count, dump_analysis_id, created_at, expires_at,
-                summary, hotspot, threads, dump_bundle
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                summary, hotspot, threads, dump_bundle, memory
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             report.summary().id(),
             report.summary().filename(),
@@ -53,8 +58,33 @@ public class JfrReportRepository {
             json(report.summaryDocument()),
             json(report.hotspot()),
             json(report.threads()),
-            report.bundle() == null ? null : json(report.bundle())
+            report.bundle() == null ? null : json(report.bundle()),
+            memory == null ? null : gzip(memory)
         );
+    }
+
+    /** 旧版报告没有内存数据时为空。 */
+    public Optional<JfrDocuments.MemoryDocument> findMemory(String id) {
+        List<byte[]> rows = jdbc.query("SELECT memory FROM jfr_report WHERE id = ?", (rs, n) -> rs.getBytes(1), id);
+        return rows.stream().filter(bytes -> bytes != null).findFirst().map(this::gunzip);
+    }
+
+    private byte[] gzip(Object value) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (GZIPOutputStream zip = new GZIPOutputStream(out, 1 << 16)) {
+            mapper.writeValue(zip, value);
+        } catch (IOException e) {
+            throw new IllegalStateException("无法序列化 JFR 内存分析结果", e);
+        }
+        return out.toByteArray();
+    }
+
+    private JfrDocuments.MemoryDocument gunzip(byte[] bytes) {
+        try (GZIPInputStream zip = new GZIPInputStream(new ByteArrayInputStream(bytes), 1 << 16)) {
+            return mapper.readValue(zip, JfrDocuments.MemoryDocument.class);
+        } catch (IOException e) {
+            throw new IllegalStateException("无法读取 JFR 内存分析结果", e);
+        }
     }
 
     public List<JfrDocuments.ReportSummary> list() {

@@ -67,6 +67,46 @@ public class JfrController {
 
     public record CallersRequest(List<String> path, String basis, String q, Integer from, Integer to) {}
 
+    @GetMapping("/{id}/memory")
+    public ResponseEntity<JfrDocuments.MemoryOverview> memory(@PathVariable String id) {
+        JfrDocuments.MemoryOverview overview = service.memory(id);
+        return overview == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(overview);
+    }
+
+    /** sort：self / inclusive / business；pkgs 是业务包前缀，逗号分隔。 */
+    @GetMapping("/{id}/memory/allocations")
+    public JfrDocuments.AllocationList allocations(@PathVariable String id,
+                                                   @RequestParam(required = false) String source,
+                                                   @RequestParam(required = false) String q,
+                                                   @RequestParam(defaultValue = "business") String sort,
+                                                   @RequestParam(required = false) Integer limit,
+                                                   @RequestParam(required = false) Integer from,
+                                                   @RequestParam(required = false) Integer to,
+                                                   @RequestParam(required = false) String type,
+                                                   @RequestParam(required = false) List<String> pkgs) {
+        return service.allocations(id, source, q, sort, limit, from, to, type, pkgs);
+    }
+
+    @GetMapping("/{id}/memory/stalls")
+    public JfrDocuments.StallReport stalls(@PathVariable String id,
+                                           @RequestParam(defaultValue = "business") String group,
+                                           @RequestParam(required = false) String thread,
+                                           @RequestParam(required = false) Integer from,
+                                           @RequestParam(required = false) Integer to,
+                                           @RequestParam(required = false) List<String> pkgs) {
+        return service.stalls(id, group, thread, from, to, pkgs);
+    }
+
+    @PostMapping("/{id}/memory/allocations/callers")
+    public List<JfrDocuments.HotspotCaller> allocationCallers(@PathVariable String id,
+                                                              @RequestBody AllocationCallersRequest request) {
+        return service.allocationCallers(id, request.source(), request.path(), request.basis(), request.q(),
+            request.from(), request.to(), request.type(), request.pkgs());
+    }
+
+    public record AllocationCallersRequest(String source, List<String> path, String basis, String q,
+                                           Integer from, Integer to, String type, List<String> pkgs) {}
+
     @GetMapping("/{id}/threads")
     public JfrDocuments.ThreadOverview threads(@PathVariable String id) {
         return service.threads(id);

@@ -403,6 +403,182 @@ export interface JfrPlatformThread extends JfrThreadRow {
   allocation: { epochMs: number; allocated: number }[]
 }
 
+/** tlab：ObjectAllocationInNewTLAB / OutsideTLAB（与 JMC 同口径）；sample：ObjectAllocationSample（default 模板也有） */
+export type JfrAllocationSourceName = 'tlab' | 'sample'
+
+export interface JfrAllocationSource {
+  source: JfrAllocationSourceName
+  events: number
+  estimatedBytes: number
+  /** 这种事件实际出现的时间范围，可能只是录制的一部分 */
+  coverStartEpochMs: number | null
+  coverEndEpochMs: number | null
+  bucketBytes: number[]
+}
+
+export interface JfrMemoryFinding {
+  level: 'critical' | 'warn' | 'info'
+  title: string
+  detail: string
+}
+
+/** 所有数组按热点时间桶对齐，没有数据的桶为 null */
+export interface JfrMemoryOverview {
+  startEpochMs: number
+  endEpochMs: number
+  bucketCount: number
+  sources: JfrAllocationSource[]
+  /** ThreadAllocationStatistics 的差值：实际分配字节数，不是估算 */
+  measuredBytes: number[] | null
+  measuredIntervalMs: number | null
+  measuredTotal: number | null
+  youngCollector: string | null
+  oldCollector: string | null
+  heapMax: number | null
+  collectors: { name: string; count: number; pauseNanos: number; longestPauseNanos: number; durationNanos: number }[]
+  gcCount: (number | null)[]
+  gcPauseNanos: (number | null)[]
+  heapPeak: (number | null)[]
+  heapFloor: (number | null)[]
+  heapCommitted: (number | null)[]
+  stallCount: number
+  stallNanos: number
+  longestStallNanos: number
+  stallBuckets: (number | null)[]
+  stallNanosBuckets: (number | null)[]
+  stallThreads: { name: string; count: number; durationNanos: number }[]
+  metaspace: (number | null)[]
+  rss: (number | null)[]
+  container: (number | null)[]
+  containerLimit: number | null
+  pools: { name: string; bytes: number; threads: number; top: { name: string; bytes: number }[] }[]
+  findings: JfrMemoryFinding[]
+}
+
+/** business：每条分配栈从栈顶往下的第一个业务方法；self：分配点（栈顶）；inclusive：出现在栈上 */
+export type JfrAllocationSort = 'business' | 'self' | 'inclusive'
+
+export interface JfrAllocationSite {
+  methodKey: string
+  label: string
+  type: string | null
+  bytes: number
+  percent: number
+}
+
+export interface JfrAllocationRow {
+  methodKey: string
+  label: string
+  selfBytes: number
+  inclusiveBytes: number
+  attributedBytes: number | null
+  selfPercent: number
+  inclusivePercent: number
+  attributedPercent: number | null
+  matched: boolean
+  expand: boolean
+  basis: JfrAllocationSort
+  /** 每个时间桶的估算字节数（按行的口径，不受时间区间影响） */
+  timeline: number[]
+  sites: JfrAllocationSite[]
+  callers: JfrCaller[]
+}
+
+export interface JfrAllocationList {
+  source: JfrAllocationSourceName
+  sort: JfrAllocationSort
+  totalBytes: number
+  rangeBytes: number
+  type: string | null
+  rangeSupported: boolean
+  rangeFrom: number | null
+  rangeTo: number | null
+  truncatedBytes: number | null
+  unattributedBytes: number | null
+  types: { name: string; bytes: number; percent: number }[]
+  methods: JfrAllocationRow[]
+}
+
+export interface JfrAllocationQuery {
+  source: JfrAllocationSourceName | null
+  q: string
+  sort: JfrAllocationSort
+  type: string | null
+  range: JfrBucketRange | null
+  pkgs: string[]
+}
+
+/** business：按首个业务帧合并；stack：每条完整调用栈一组 */
+export type JfrStallGroupBy = 'business' | 'stack'
+
+export interface JfrStallFrame {
+  methodKey: string
+  label: string
+  business: boolean
+}
+
+export interface JfrStallTrace {
+  frames: JfrStallFrame[]
+  /** 从栈顶数第一个业务帧的位置 */
+  anchor?: number | null
+  truncated: boolean
+  count: number
+  durationNanos: number
+}
+
+export interface JfrStallEvent {
+  epochMs: number
+  durationNanos: number
+  thread?: string | null
+  type?: string | null
+  /** 触发停顿的页分配大小 */
+  size?: number | null
+}
+
+export interface JfrStallThread {
+  name: string
+  count: number
+  durationNanos: number
+}
+
+export interface JfrStallGroup {
+  key: string
+  label: string
+  business: boolean
+  count: number
+  durationNanos: number
+  longestNanos: number
+  sizeBytes: number
+  percent: number
+  threadCount: number
+  threads: JfrStallThread[]
+  types: Record<string, number>
+  stackCount: number
+  traces: JfrStallTrace[]
+  events: JfrStallEvent[]
+}
+
+export interface JfrStallReport {
+  group: JfrStallGroupBy
+  thread?: string | null
+  rangeFrom?: number | null
+  rangeTo?: number | null
+  stacksAvailable: boolean
+  count: number
+  durationNanos: number
+  longestNanos: number
+  threadCount: number
+  groupCount: number
+  groups: JfrStallGroup[]
+}
+
+export interface JfrStallQuery {
+  group: JfrStallGroupBy
+  thread: string
+  range: JfrBucketRange | null
+  pkgs: string[]
+}
+
 const JFR_TIMEOUT_MS = 300000
 
 export async function uploadJfr(file: File, onProgress?: (percent: number) => void): Promise<JfrReportSummary> {
@@ -464,6 +640,57 @@ export async function fetchJfrThreads(id: string): Promise<JfrThreadOverview> {
 
 export async function fetchJfrThread(id: string, javaThreadId: number): Promise<JfrPlatformThread> {
   const { data } = await api.get<JfrPlatformThread>(`/jfr/${id}/threads/${javaThreadId}`)
+  return data
+}
+
+/** 旧版报告没有内存数据时返回 null */
+export async function fetchJfrMemory(id: string): Promise<JfrMemoryOverview | null> {
+  const { data, status } = await api.get<JfrMemoryOverview>(`/jfr/${id}/memory`, { timeout: 60000 })
+  return status === 204 || !data ? null : data
+}
+
+export async function fetchJfrAllocations(id: string, query: JfrAllocationQuery): Promise<JfrAllocationList> {
+  const params: Record<string, string | number> = { q: query.q, sort: query.sort }
+  if (query.source) params.source = query.source
+  if (query.type) params.type = query.type
+  if (query.range) {
+    params.from = query.range.from
+    params.to = query.range.to
+  }
+  if (query.pkgs.length) params.pkgs = query.pkgs.join(',')
+  const { data } = await api.get<JfrAllocationList>(`/jfr/${id}/memory/allocations`, { params, timeout: 120000 })
+  return data
+}
+
+export async function fetchJfrAllocationCallers(
+  id: string,
+  path: string[],
+  basis: JfrAllocationSort,
+  query: JfrAllocationQuery,
+): Promise<JfrCaller[]> {
+  const body = {
+    source: query.source,
+    path,
+    basis,
+    q: query.q,
+    from: query.range?.from ?? null,
+    to: query.range?.to ?? null,
+    type: query.type,
+    pkgs: query.pkgs,
+  }
+  const { data } = await api.post<JfrCaller[]>(`/jfr/${id}/memory/allocations/callers`, body, { timeout: 60000 })
+  return data
+}
+
+export async function fetchJfrStalls(id: string, query: JfrStallQuery): Promise<JfrStallReport> {
+  const params: Record<string, string | number> = { group: query.group }
+  if (query.thread.trim()) params.thread = query.thread.trim()
+  if (query.range) {
+    params.from = query.range.from
+    params.to = query.range.to
+  }
+  if (query.pkgs.length) params.pkgs = query.pkgs.join(',')
+  const { data } = await api.get<JfrStallReport>(`/jfr/${id}/memory/stalls`, { params, timeout: 60000 })
   return data
 }
 

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { inject, ref, type Ref } from 'vue'
-import type { JfrCaller, JfrTreeBasis } from '@/api/threadscope'
+import type { JfrAllocationSort, JfrCaller } from '@/api/threadscope'
 
 defineOptions({ name: 'CallerTree' })
 /** path 是从热点根方法到当前这一层父节点的方法链。 */
-const props = defineProps<{ callers: JfrCaller[]; depth: number; path: string[]; basis: JfrTreeBasis }>()
+const props = defineProps<{ callers: JfrCaller[]; depth: number; path: string[]; basis: JfrAllocationSort }>()
 
-const loadCallers = inject<(path: string[], basis: JfrTreeBasis) => Promise<JfrCaller[]>>('jfrLoadCallers')
+const loadCallers = inject<(path: string[], basis: JfrAllocationSort) => Promise<JfrCaller[]>>('jfrLoadCallers')
 const totalSamples = inject<Ref<number>>('jfrTotalSamples')
+/** 分配树的权重是字节数，由内存面板提供格式化 */
+const formatWeight = inject<(value: number) => string>('jfrFormatWeight', value => `${value.toLocaleString()} 样本`)
 const collapsed = ref<Record<string, boolean>>({})
 const loaded = ref<Record<string, JfrCaller[]>>({})
 const loading = ref<Record<string, boolean>>({})
@@ -23,7 +25,7 @@ function expandable(caller: JfrCaller): boolean {
 function share(caller: JfrCaller): string {
   const total = totalSamples?.value ?? 0
   const pct = total > 0 ? (caller.samples * 100) / total : 0
-  return `${caller.samples.toLocaleString()} 样本 · 占全部 ${pct < 0.01 && pct > 0 ? '<0.01' : pct.toFixed(2)}%`
+  return `${formatWeight(caller.samples)} · 占全部 ${pct < 0.01 && pct > 0 ? '<0.01' : pct.toFixed(2)}%`
 }
 
 async function toggle(caller: JfrCaller) {

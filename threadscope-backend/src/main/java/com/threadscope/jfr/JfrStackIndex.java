@@ -18,6 +18,8 @@ final class JfrStackIndex {
     final long truncatedSamples;
     /** 每条栈的稀疏时间桶分布；旧版报告没有，timed 为 false。 */
     final boolean timed;
+    /** 分配栈的对象类型下标；CPU 栈为 null。 */
+    final int[] types;
     private final int[][] buckets;
     private final long[][] bucketSamples;
     private final Map<String, Integer> ids;
@@ -38,9 +40,12 @@ final class JfrStackIndex {
         int[] seen = new int[keys.size()];
         long cut = 0;
         boolean allTimed = n > 0;
+        boolean typed = n > 0 && stacks.getFirst().type() != null;
+        types = typed ? new int[n] : null;
         for (int s = 0; s < n; s++) {
             JfrDocuments.StackSample stack = stacks.get(s);
             frames[s] = stack.frames();
+            if (typed) types[s] = stack.type() == null ? -1 : stack.type();
             samples[s] = stack.samples();
             truncated[s] = stack.truncated();
             buckets[s] = stack.buckets();
@@ -97,6 +102,27 @@ final class JfrStackIndex {
             weights[s] = sum;
         }
         return weights;
+    }
+
+    /** 在 {@link #weights(JfrDocuments.BucketRange)} 的基础上只保留对象类型为 type 的栈；type < 0 不过滤。 */
+    long[] weights(JfrDocuments.BucketRange range, int type) {
+        long[] base = weights(range);
+        if (type < 0 || types == null) return base;
+        long[] filtered = new long[base.length];
+        for (int s = 0; s < base.length; s++) {
+            if (types[s] == type) filtered[s] = base[s];
+        }
+        return filtered;
+    }
+
+    /** 把栈 s 的时间桶分布累加到 into；旧版报告没有时间信息时什么也不做。 */
+    void addBuckets(int s, long[] into) {
+        int[] b = buckets[s];
+        long[] c = bucketSamples[s];
+        if (b == null || c == null) return;
+        for (int i = 0; i < b.length; i++) {
+            if (b[i] >= 0 && b[i] < into.length) into[b[i]] += c[i];
+        }
     }
 
     /** 每个方法是否匹配搜索词；needle 为空时返回 null。 */
