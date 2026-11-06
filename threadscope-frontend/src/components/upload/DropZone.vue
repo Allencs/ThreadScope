@@ -90,6 +90,10 @@ async function handlePaste() {
     <!-- Background decoration -->
     <div class="bg-grid"></div>
 
+    <a class="manual-link" href="/docs/jfr-advanced-manual.html" title="查看 JFR 进阶使用手册">
+      JFR 手册
+    </a>
+
     <!-- Main content -->
     <div class="dropzone-content">
       <!-- Logo & Title -->
@@ -219,6 +223,27 @@ async function handlePaste() {
     linear-gradient(rgba(37, 99, 235, 0.04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(37, 99, 235, 0.04) 1px, transparent 1px);
   background-size: 48px 48px;
+}
+
+.manual-link {
+  position: absolute;
+  right: 20px;
+  bottom: 16px;
+  z-index: 2;
+  padding: 4px 10px;
+  border: var(--ts-border);
+  border-radius: 999px;
+  background: var(--ts-bg-surface);
+  color: var(--ts-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-decoration: none;
+  transition: all var(--ts-transition);
+}
+
+.manual-link:hover {
+  border-color: var(--ts-accent);
+  color: var(--ts-accent);
 }
 
 .dropzone-content {

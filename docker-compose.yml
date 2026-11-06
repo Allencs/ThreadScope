@@ -17,7 +17,9 @@ services:
 
   frontend:
     build:
-      context: ./threadscope-frontend
+      # 构建上下文是仓库根目录，才能把 docs/jfr-advanced-manual.html 打进前端镜像
+      context: .
+      dockerfile: threadscope-frontend/Dockerfile
       args:
         # 国内服务器可在 .env 中设置 NPM_REGISTRY=https://registry.npmmirror.com
         - NPM_REGISTRY=${NPM_REGISTRY:-https://registry.npmjs.org}
