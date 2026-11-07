@@ -103,15 +103,36 @@ async function remove(user: ManagedUser) {
   })
 }
 
+/** 通过 HTTP + IP 访问不是安全上下文，navigator.clipboard 不存在，退回 execCommand */
+function copyWithSelection(text: string): boolean {
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  area.select()
+  try {
+    return document.execCommand('copy')
+  } finally {
+    document.body.removeChild(area)
+  }
+}
+
 async function copyPassword() {
   if (!issued.value) return
+  const text = issued.value.password
   try {
-    await navigator.clipboard.writeText(issued.value.password)
-    copied.value = true
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      copied.value = true
+    } else {
+      copied.value = copyWithSelection(text)
+    }
   } catch {
-    // HTTP 页面下浏览器可能禁用剪贴板 API，用户手动选中复制即可
-    copied.value = false
+    copied.value = copyWithSelection(text)
   }
+  if (!copied.value) errorMsg.value = '浏览器不允许自动复制，请手动选中密码复制'
 }
 
 onMounted(load)
@@ -142,7 +163,7 @@ onMounted(load)
       <div v-if="issued" class="issued">
         <div>
           <strong>「{{ issued.username }}」的临时密码</strong>
-          <p>只显示这一次，请通过安全渠道发给对方。对方首次登录后必须修改。</p>
+          <p>只显示这一次，关闭后无法再查看（遗失可点「重置密码」重新生成）。对方首次登录后必须修改。</p>
         </div>
         <code>{{ issued.password }}</code>
         <button type="button" @click="copyPassword">{{ copied ? '已复制' : '复制' }}</button>
