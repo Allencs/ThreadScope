@@ -1,5 +1,16 @@
 server:
   port: 8080
+  servlet:
+    session:
+      # 无操作超过该时长需重新登录；Session 存在内存里，后端重启后所有人需要重新登录
+      timeout: ${THREADSCOPE_SESSION_TIMEOUT:8h}
+      tracking-modes: cookie
+      cookie:
+        name: THREADSCOPE_SESSION
+        http-only: true
+        same-site: strict
+        # 目前是 HTTP 访问；以后上了 HTTPS 改为 true，cookie 才不会以明文发送
+        secure: ${THREADSCOPE_COOKIE_SECURE:false}
 
 spring:
   application:
@@ -32,6 +43,17 @@ management:
       show-details: never
 
 threadscope:
+  auth:
+    # 库里还没有任何用户时用这组账号创建管理员；密码留空则生成随机临时密码打印到日志，首次登录强制修改
+    admin-username: ${THREADSCOPE_AUTH_ADMIN_USERNAME:admin}
+    admin-password: ${THREADSCOPE_AUTH_ADMIN_PASSWORD:}
+    # 忘记管理员密码时设为 true 并重启，按上面的账号密码重置；用完改回 false
+    reset-admin-password: ${THREADSCOPE_AUTH_RESET_ADMIN_PASSWORD:false}
+    # 登录失败锁定：同 IP 同账号 / 同 IP / 同账号的失败次数上限，最后一次失败后锁定 lock-minutes 分钟
+    max-failures-per-user-and-ip: 5
+    max-failures-per-ip: 20
+    max-failures-per-user: 50
+    lock-minutes: 15
   log:
     # 滚动日志目录。本地 bootRun 由 Gradle 设为仓库根目录 logs/；
     # 容器里由 THREADSCOPE_LOG_DIR=/logs 指向挂载卷。

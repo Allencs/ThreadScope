@@ -27,7 +27,7 @@ public class JfrReportRepository {
 
     private static final String SUMMARY_COLUMNS = """
         id, original_filename, recording_start, duration_millis, sample_count,
-        thread_dump_count, dump_analysis_id, created_at, expires_at, summary
+        thread_dump_count, dump_analysis_id, created_at, expires_at, summary, created_by
         """;
 
     private final JdbcTemplate jdbc;
@@ -43,8 +43,8 @@ public class JfrReportRepository {
             INSERT INTO jfr_report (
                 id, original_filename, recording_start, duration_millis, sample_count,
                 thread_dump_count, dump_analysis_id, created_at, expires_at,
-                summary, hotspot, threads, dump_bundle, memory
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                summary, hotspot, threads, dump_bundle, memory, created_by
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             report.summary().id(),
             report.summary().filename(),
@@ -59,7 +59,8 @@ public class JfrReportRepository {
             json(report.hotspot()),
             json(report.threads()),
             report.bundle() == null ? null : json(report.bundle()),
-            memory == null ? null : gzip(memory)
+            memory == null ? null : gzip(memory),
+            report.summary().createdBy()
         );
     }
 
@@ -102,7 +103,7 @@ public class JfrReportRepository {
         List<StoredReport> rows = jdbc.query("""
             SELECT id, original_filename, recording_start, duration_millis, sample_count,
                    thread_dump_count, dump_analysis_id, created_at, expires_at,
-                   summary, hotspot, threads
+                   summary, hotspot, threads, created_by
             FROM jfr_report WHERE id = ?
             """, (rs, n) -> {
             JfrDocuments.ReportSummary summary = mapSummary(rs);
@@ -147,7 +148,8 @@ public class JfrReportRepository {
             rs.getString("dump_analysis_id"),
             rs.getTimestamp("created_at").toInstant().toEpochMilli(),
             rs.getTimestamp("expires_at").toInstant().toEpochMilli(),
-            summary == null ? null : summary.jvmVersion()
+            summary == null ? null : summary.jvmVersion(),
+            rs.getString("created_by")
         );
     }
 

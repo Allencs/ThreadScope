@@ -5,6 +5,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.threadscope.config.JfrProperties;
 import com.threadscope.engine.analyzer.CodeLayerClassifier;
 import com.threadscope.exception.AnalysisNotFoundException;
+import com.threadscope.exception.ApiException;
 import com.threadscope.exception.DumpTooLargeException;
 import com.threadscope.model.AnalysisBundle;
 import com.threadscope.service.AnalysisOrchestrator;
@@ -13,6 +14,7 @@ import com.threadscope.service.AnalysisStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -75,7 +77,7 @@ public class JfrAnalysisService {
         purgeIncoming(Instant.now().minus(INCOMING_TTL));
     }
 
-    public JfrDocuments.ReportSummary upload(MultipartFile file) throws IOException {
+    public JfrDocuments.ReportSummary upload(MultipartFile file, String uploader) throws IOException {
         if (file == null || file.isEmpty()) throw new IllegalArgumentException("上传的 JFR 文件是空的");
         if (file.getSize() > properties.maxUploadBytes()) {
             throw new DumpTooLargeException("JFR 文件超过 " + properties.maxUploadMb() + "MB 上限");
@@ -88,7 +90,7 @@ public class JfrAnalysisService {
             Files.copy(in, target);
             parsing.acquire();
             try {
-                return analyze(target, filename);
+                return analyze(target, filename, uploader);
             } finally {
                 parsing.release();
             }
@@ -133,7 +135,7 @@ public class JfrAnalysisService {
         return new JfrDocuments.ReportSummary(
             summary.id(), summary.filename(), start, Math.max(0, end - start),
             summary.sampleCount(), summary.threadDumpCount(), summary.dumpAnalysisId(),
-            summary.createdAtEpochMs(), summary.expiresAtEpochMs(), summary.jvmVersion());
+            summary.createdAtEpochMs(), summary.expiresAtEpochMs(), summary.jvmVersion(), summary.createdBy());
     }
 
     /** from / to 是热点时间桶下标，区间 [from, to)；不传或覆盖整份录制时统计全部样本。 */
@@ -239,9 +241,13 @@ public class JfrAnalysisService {
         return new OpenDump(report.summary().dumpAnalysisId(), report.summary().threadDumpCount());
     }
 
-    public void delete(String id) {
+    /** 管理员可以删任何报告，其他用户只能删自己上传的。 */
+    public void delete(String id, String actor, boolean admin) {
         JfrReportRepository.StoredReport report = repository.find(id)
             .orElseThrow(() -> new AnalysisNotFoundException(id));
+        if (!admin && (actor == null || !actor.equals(report.summary().createdBy()))) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "只能删除自己上传的报告");
+        }
         if (report.summary().dumpAnalysisId() != null) dumpStorage.evict(report.summary().dumpAnalysisId());
         repository.delete(id);
         cache.invalidate(id);
@@ -249,7 +255,7 @@ public class JfrAnalysisService {
         memory.invalidate(id);
     }
 
-    private JfrDocuments.ReportSummary analyze(Path file, String filename) throws IOException {
+    private JfrDocuments.ReportSummary analyze(Path file, String filename, String uploader) throws IOException {
         JfrDocuments.ParseResult parsed = parser.parse(file);
         String id = UUID.randomUUID().toString();
         String dumpAnalysisId = null;
@@ -279,7 +285,8 @@ public class JfrAnalysisService {
             dumpAnalysisId,
             now.toEpochMilli(),
             now.plus(Duration.ofDays(properties.retentionDays())).toEpochMilli(),
-            parsed.summary().jvmVersion()
+            parsed.summary().jvmVersion(),
+            uploader
         );
         var stored = new JfrReportRepository.StoredReport(summary, parsed.summary(), parsed.hotspot(), parsed.threads(), bundle);
         repository.insert(stored, parsed.memory());

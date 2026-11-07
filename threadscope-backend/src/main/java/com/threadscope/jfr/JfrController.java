@@ -1,7 +1,9 @@
 package com.threadscope.jfr;
 
+import com.threadscope.auth.AuthUser;
 import com.threadscope.exception.AnalysisNotFoundException;
 import org.springframework.context.annotation.Profile;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -29,8 +31,9 @@ public class JfrController {
     }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public JfrDocuments.ReportSummary upload(@RequestParam("file") MultipartFile file) throws IOException {
-        return service.upload(file);
+    public JfrDocuments.ReportSummary upload(@RequestParam("file") MultipartFile file,
+                                             @AuthenticationPrincipal AuthUser user) throws IOException {
+        return service.upload(file, user.getUsername());
     }
 
     @GetMapping
@@ -123,8 +126,8 @@ public class JfrController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable String id) {
-        service.delete(id);
+    public ResponseEntity<Void> delete(@PathVariable String id, @AuthenticationPrincipal AuthUser user) {
+        service.delete(id, user.getUsername(), user.isAdmin());
         return ResponseEntity.noContent().build();
     }
 

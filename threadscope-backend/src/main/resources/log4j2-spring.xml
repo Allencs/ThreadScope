@@ -2,7 +2,7 @@
 <Configuration status="WARN" monitorInterval="30">
     <Properties>
         <Property name="LOG_DIR">${spring:threadscope.log.dir:-${sys:threadscope.log.dir:-../logs}}</Property>
-        <Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] %c{1.} - %msg%n%throwable</Property>
+        <Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t]%notEmpty{ [%X{user}]} %c{1.} - %msg%n%throwable</Property>
     </Properties>
 
     <Appenders>

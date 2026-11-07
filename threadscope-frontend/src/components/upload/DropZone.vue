@@ -9,6 +9,7 @@ import { useAnalysisStore } from '@/stores/analysisStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { fetchJfrReports, uploadJfr, type JfrReportSummary } from '@/api/threadscope'
 import CodeSettingsModal from '@/components/settings/CodeSettingsModal.vue'
+import UserMenu from '@/components/common/UserMenu.vue'
 
 const router = useRouter()
 const store = useAnalysisStore()
@@ -187,6 +188,7 @@ function ago(epoch: number): string {
         <button type="button" @click="router.push('/jfr')">JFR 分析历史</button>
         <button type="button" @click="settings.settingsOpen = true">代码归属设置</button>
         <a href="/docs/jfr-advanced-manual.html" target="_blank" rel="noopener">JFR 手册 ↗</a>
+        <UserMenu />
       </nav>
     </header>
 

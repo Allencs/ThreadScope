@@ -241,8 +241,24 @@ jcmd <pid> Thread.dump_to_file -format=json /tmp/threads.json
 ### 一键启动
 
 ```bash
+cp .env.example .env   # 按需修改管理员账号密码
 docker compose up -d --build
 ```
+
+### 登录与权限
+
+除健康检查外，所有接口都需要登录。首次启动（库里还没有用户）时按 `.env` 里的 `THREADSCOPE_ADMIN_USERNAME` / `THREADSCOPE_ADMIN_PASSWORD` 创建管理员；密码留空则生成随机临时密码，用 `docker compose logs backend | grep "temporary password"` 查看，首次登录必须修改。
+
+| 角色 | 权限 |
+|---|---|
+| 管理员 | 用户管理（创建、停用、改角色、重置密码、删除），删除任何 JFR 报告 |
+| 普通用户 | 上传与查看全部分析，只能删除自己上传的 JFR 报告 |
+
+- 管理员在「用户管理」页创建账号，系统生成一次性临时密码，用户首次登录后强制修改。
+- 账号被停用、删除、重置密码或改角色后，已登录的会话立即失效。
+- 同一 IP 对同一账号连续输错 5 次锁定 15 分钟；nginx 另对登录接口按 IP 限流。
+- 忘记管理员密码：在 `.env` 中设置 `THREADSCOPE_ADMIN_PASSWORD` 和 `THREADSCOPE_RESET_ADMIN_PASSWORD=true`，执行 `docker compose up -d` 后即重置，之后改回 `false`。
+- 当前通过 HTTP 访问时密码和会话 cookie 是明文传输的，建议在云服务器安全组里只放行办公网出口 IP；以后启用 HTTPS 后把 `THREADSCOPE_COOKIE_SECURE` 改为 `true`。
 
 构建前端镜像时如果访问官方 npm 源较慢，可在 `.env` 中设置：
 

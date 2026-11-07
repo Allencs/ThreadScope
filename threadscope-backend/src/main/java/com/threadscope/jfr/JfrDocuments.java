@@ -453,7 +453,8 @@ public final class JfrDocuments {
         String dumpAnalysisId,
         long createdAtEpochMs,
         long expiresAtEpochMs,
-        String jvmVersion
+        String jvmVersion,
+        String createdBy
     ) {}
 
     public record ThreadRow(

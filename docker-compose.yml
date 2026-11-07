@@ -19,7 +19,13 @@ services:
       - THREADSCOPE_LOG_DIR=/logs
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/threadscope
       - SPRING_DATASOURCE_USERNAME=threadscope
-      - SPRING_DATASOURCE_PASSWORD=threadscope
+      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD:-threadscope}
+      # 登录：首次启动（库里没有用户）时按这组账号创建管理员，见 .env.example
+      - THREADSCOPE_AUTH_ADMIN_USERNAME=${THREADSCOPE_ADMIN_USERNAME:-admin}
+      - THREADSCOPE_AUTH_ADMIN_PASSWORD=${THREADSCOPE_ADMIN_PASSWORD:-}
+      - THREADSCOPE_AUTH_RESET_ADMIN_PASSWORD=${THREADSCOPE_RESET_ADMIN_PASSWORD:-false}
+      - THREADSCOPE_SESSION_TIMEOUT=${THREADSCOPE_SESSION_TIMEOUT:-8h}
+      - THREADSCOPE_COOKIE_SECURE=${THREADSCOPE_COOKIE_SECURE:-false}
     volumes:
       - ./logs:/logs
     expose:
@@ -62,9 +68,11 @@ services:
     environment:
       POSTGRES_DB: threadscope
       POSTGRES_USER: threadscope
-      POSTGRES_PASSWORD: threadscope
+      # 只在第一次初始化数据卷时生效；已有数据卷要改密码需在库里执行 ALTER USER
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-threadscope}
+    # 只绑定本机回环地址：数据库里有 JFR 解析结果和账号，不能暴露到公网
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - threadscope-pg:/var/lib/postgresql/data
     healthcheck:

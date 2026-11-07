@@ -24,6 +24,14 @@ interface ApiErrorBody {
   message?: string
 }
 
+/** 带 HTTP 状态码和后端错误码的错误，便于区分未登录、无权限等情况 */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number | null, readonly code: string | null) {
+    super(message)
+  }
+}
+
+// 同源请求时 axios 自动把 XSRF-TOKEN cookie 放进 X-XSRF-TOKEN 请求头（后端 CSRF 校验）
 const api = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
@@ -38,20 +46,122 @@ const UPLOAD_TIMEOUT_MS = 120000
  */
 function toFriendlyError(error: unknown): Error {
   if (axios.isAxiosError<ApiErrorBody>(error)) {
-    if (error.response?.data?.message) return new Error(error.response.data.message)
+    const status = error.response?.status ?? null
+    const code = error.response?.data?.code ?? null
+    if (error.response?.data?.message) return new ApiError(error.response.data.message, status, code)
     if (error.code === 'ECONNABORTED') {
-      return new Error('Request timed out — the dump may be too large or the server is busy')
+      return new ApiError('Request timed out — the dump may be too large or the server is busy', null, null)
     }
     if (error.response) {
-      if (error.response.status === 413) return new Error('Dump exceeds the 50MB size limit')
-      return new Error(`Request failed (HTTP ${error.response.status})`)
+      if (error.response.status === 413) return new ApiError('Dump exceeds the 50MB size limit', status, code)
+      return new ApiError(`Request failed (HTTP ${error.response.status})`, status, code)
     }
-    return new Error('Network error — unable to reach the server')
+    return new ApiError('Network error — unable to reach the server', null, null)
   }
   return error instanceof Error ? error : new Error(String(error))
 }
 
-api.interceptors.response.use(undefined, (error) => Promise.reject(toFriendlyError(error)))
+/** 会话失效或需要先改密码时的处理，由 authStore 注册（避免 api 层依赖路由） */
+type AuthFailure = 'unauthenticated' | 'password-change-required'
+let authFailureHandler: ((reason: AuthFailure) => void) | null = null
+
+export function onAuthFailure(handler: (reason: AuthFailure) => void) {
+  authFailureHandler = handler
+}
+
+/** 登录接口自己处理 401（用户名或密码错误），不触发跳转 */
+const AUTH_PASSTHROUGH = ['/auth/login', '/auth/me']
+
+api.interceptors.response.use(undefined, async (error) => {
+  if (axios.isAxiosError<ApiErrorBody>(error) && error.response && error.config) {
+    const config = error.config as typeof error.config & { _csrfRetried?: boolean }
+    const code = error.response.data?.code
+    // 首次请求还没有 XSRF-TOKEN cookie 时会被拒，后端已在这次响应里下发 cookie，重试一次即可
+    if (code === 'CSRF_INVALID' && !config._csrfRetried) {
+      config._csrfRetried = true
+      return api.request(config)
+    }
+    if (!AUTH_PASSTHROUGH.includes(config.url ?? '')) {
+      if (error.response.status === 401) authFailureHandler?.('unauthenticated')
+      else if (code === 'PASSWORD_CHANGE_REQUIRED') authFailureHandler?.('password-change-required')
+    }
+  }
+  return Promise.reject(toFriendlyError(error))
+})
+
+// ── Auth ──
+export type UserRole = 'ADMIN' | 'USER'
+
+export interface CurrentUser {
+  username: string
+  role: UserRole
+  mustChangePassword: boolean
+}
+
+export async function login(username: string, password: string): Promise<CurrentUser> {
+  const { data } = await api.post<CurrentUser>('/auth/login', { username, password })
+  return data
+}
+
+export async function logout(): Promise<void> {
+  await api.post('/auth/logout')
+}
+
+/** 未登录时返回 null */
+export async function fetchCurrentUser(): Promise<CurrentUser | null> {
+  try {
+    const { data } = await api.get<CurrentUser>('/auth/me')
+    return data
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) return null
+    throw error
+  }
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<CurrentUser> {
+  const { data } = await api.post<CurrentUser>('/auth/password', { currentPassword, newPassword })
+  return data
+}
+
+// ── 用户管理（管理员） ──
+export interface ManagedUser {
+  id: number
+  username: string
+  role: UserRole
+  enabled: boolean
+  mustChangePassword: boolean
+  createdAtEpochMs: number
+  lastLoginAtEpochMs: number | null
+}
+
+export interface PasswordIssued {
+  user: ManagedUser
+  temporaryPassword: string
+}
+
+export async function fetchUsers(): Promise<ManagedUser[]> {
+  const { data } = await api.get<ManagedUser[]>('/admin/users')
+  return data
+}
+
+export async function createUser(username: string, role: UserRole): Promise<PasswordIssued> {
+  const { data } = await api.post<PasswordIssued>('/admin/users', { username, role })
+  return data
+}
+
+export async function updateUser(id: number, patch: { role?: UserRole; enabled?: boolean }): Promise<ManagedUser> {
+  const { data } = await api.patch<ManagedUser>(`/admin/users/${id}`, patch)
+  return data
+}
+
+export async function resetUserPassword(id: number): Promise<PasswordIssued> {
+  const { data } = await api.post<PasswordIssued>(`/admin/users/${id}/reset-password`)
+  return data
+}
+
+export async function deleteUser(id: number): Promise<void> {
+  await api.delete(`/admin/users/${id}`)
+}
 
 // ── Upload ──
 /**
@@ -240,6 +350,8 @@ export interface JfrReportSummary {
   createdAtEpochMs: number
   expiresAtEpochMs: number
   jvmVersion: string | null
+  /** 上传者；登录功能上线前的报告为 null */
+  createdBy: string | null
 }
 
 export interface JfrCaller {

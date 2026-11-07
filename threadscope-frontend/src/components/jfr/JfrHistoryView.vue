@@ -2,8 +2,15 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { deleteJfrReport, fetchJfrReports, type JfrReportSummary } from '@/api/threadscope'
+import { useAuthStore } from '@/stores/authStore'
+import UserMenu from '@/components/common/UserMenu.vue'
 
 const router = useRouter()
+const auth = useAuthStore()
+
+function canDelete(report: JfrReportSummary) {
+  return auth.isAdmin || (report.createdBy != null && report.createdBy === auth.user?.username)
+}
 const reports = ref<JfrReportSummary[]>([])
 const errorMsg = ref('')
 const loading = ref(true)
@@ -56,6 +63,7 @@ onMounted(load)
       </div>
       <span class="spacer"></span>
       <button class="refresh" type="button" @click="load">刷新</button>
+      <UserMenu />
     </header>
 
     <div class="history-body">
@@ -72,6 +80,7 @@ onMounted(load)
           <th>样本</th>
           <th>线程 Dump</th>
           <th>保存于</th>
+          <th>上传者</th>
           <th></th>
         </tr>
       </thead>
@@ -86,9 +95,10 @@ onMounted(load)
           <td class="mono">{{ report.sampleCount.toLocaleString() }}</td>
           <td class="mono">{{ report.threadDumpCount }}</td>
           <td class="mono">{{ formatTime(report.createdAtEpochMs) }}</td>
+          <td>{{ report.createdBy || '—' }}</td>
           <td class="actions">
             <button @click="router.push(`/jfr/${report.id}`)">打开</button>
-            <button class="danger" @click="remove(report)">删除</button>
+            <button v-if="canDelete(report)" class="danger" @click="remove(report)">删除</button>
           </td>
         </tr>
       </tbody>

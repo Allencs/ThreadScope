@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -28,6 +29,11 @@ public class GlobalExceptionHandler {
             .body(new ErrorResponse("ANALYSIS_NOT_FOUND", e.getMessage()));
     }
 
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<ErrorResponse> handleApi(ApiException e) {
+        return ResponseEntity.status(e.status()).body(new ErrorResponse(e.code(), e.getMessage()));
+    }
+
     @ExceptionHandler(DumpTooLargeException.class)
     public ResponseEntity<ErrorResponse> handleTooLarge(DumpTooLargeException e) {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
@@ -49,6 +55,11 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleBadRequest(Exception e) {
         return ResponseEntity.badRequest()
             .body(new ErrorResponse("BAD_REQUEST", e.getMessage()));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleUnreadable(HttpMessageNotReadableException e) {
+        return ResponseEntity.badRequest().body(new ErrorResponse("BAD_REQUEST", "请求体格式不正确"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
