@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
 
-/** 悬停显示的说明：不带 label 时是一个 ⓘ 图标，带 label 时是一枚提示标签。 */
+/** 悬停显示的说明：不带 label 时是一个 ⓘ 图标，带 label 时是一枚提示标签；也可以用 trigger 插槽自定义。 */
 const props = withDefaults(defineProps<{
   tone?: 'info' | 'warn' | 'legacy'
   label?: string
@@ -56,8 +56,10 @@ onBeforeUnmount(close)
     @focus="show"
     @blur="hide"
   >
-    <i class="icon" aria-hidden="true">{{ tone === 'info' ? 'i' : '!' }}</i>
-    <span v-if="label" class="label">{{ label }}</span>
+    <slot name="trigger">
+      <i class="icon" aria-hidden="true">{{ tone === 'info' ? 'i' : '!' }}</i>
+      <span v-if="label" class="label">{{ label }}</span>
+    </slot>
   </span>
   <Teleport to="body">
     <Transition name="hint-pop">

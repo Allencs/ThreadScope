@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import type { JfrAllocationSource, JfrBucketRange, JfrMemoryOverview } from '@/api/threadscope'
+import FoldChevron from '@/components/common/FoldChevron.vue'
 import HintTip from '@/components/common/HintTip.vue'
+import JfrSource from '@/components/jfr/JfrSource.vue'
 import { formatBytes, formatNanos, formatRate } from '@/utils/bytes'
+import { allocationEvents, JFR_SOURCES } from '@/utils/jfrEvents'
 
 export interface MemoryTrendMethod {
   pkg: string
@@ -19,9 +22,15 @@ const props = defineProps<{
   mode: 'default' | 'preview' | 'pinned'
   range: JfrBucketRange | null
   rangeEnabled: boolean
+  folded?: boolean
 }>()
 
-const emit = defineEmits<{ select: [range: JfrBucketRange | null] }>()
+const emit = defineEmits<{ select: [range: JfrBucketRange | null]; toggle: [] }>()
+
+function onHeadClick(event: MouseEvent) {
+  if ((event.target as HTMLElement).closest('.hint, button')) return
+  emit('toggle')
+}
 
 const MODE_LABEL = { default: 'Top 1', preview: '预览', pinned: '已选中' } as const
 
@@ -335,7 +344,7 @@ const tip = computed(() => {
 
 <template>
   <div class="mem">
-    <div class="mem-head">
+    <div class="mem-head" @click="onHeadClick">
       <div class="mem-title">
         <h3>
           分配速率与堆内存
@@ -351,6 +360,7 @@ const tip = computed(() => {
             <p>底部小刻度是 GC，<span class="stall-text">红色竖带</span>是 ZGC 分配停顿（线程等 GC 腾空间），颜色越深停顿越久。</p>
             <p v-if="rangeEnabled" class="hint-note">在图上<b>按住拖动</b>框选时间段，下方分配热点只统计这段时间；按 Esc 取消。</p>
           </HintTip>
+          <JfrSource :events="[...allocationEvents(source?.source), ...JFR_SOURCES.memoryChart]" />
         </h3>
         <p>
           <button v-if="range" type="button" class="range-chip" title="取消区间（Esc）" @click="emit('select', null)">
@@ -362,7 +372,7 @@ const tip = computed(() => {
           <template v-if="overview.stallCount"> · <span class="stall-text">分配停顿 <b>{{ overview.stallCount }}</b> 次</span></template>
         </p>
       </div>
-      <div class="legend">
+      <div v-show="!folded" class="legend">
         <span><i class="sw est"></i>估算分配</span>
         <span v-if="measured"><i class="sw measured"></i>实际分配</span>
         <span v-if="method"><i class="sw method"></i>选中方法</span>
@@ -372,9 +382,10 @@ const tip = computed(() => {
         <span v-if="hasRss"><i class="sw rss"></i>RSS</span>
         <span v-if="stallBands.length"><i class="sw stall"></i>分配停顿</span>
       </div>
+      <FoldChevron :folded="folded" />
     </div>
 
-    <div v-if="method && methodAvg != null" class="focus" :class="{ preview: mode === 'preview' }">
+    <div v-if="method && methodAvg != null" v-show="!folded" class="focus" :class="{ preview: mode === 'preview' }">
       <span class="focus-tag">{{ MODE_LABEL[mode] }}</span>
       <span class="focus-name" :title="method.pkg + method.name"><span class="pkg">{{ method.pkg }}</span><b>{{ method.name }}</b></span>
       <span class="focus-basis">{{ method.basisLabel }}</span>
@@ -382,7 +393,7 @@ const tip = computed(() => {
       <span v-if="methodShare != null" class="focus-stat share">占估算分配 <b>{{ methodShare.toFixed(1) }}%</b></span>
     </div>
 
-    <div ref="host" class="plot" @mouseleave="hover = null">
+    <div v-show="!folded" ref="host" class="plot" @mouseleave="hover = null">
       <svg :width="width" :height="HEIGHT" :viewBox="`0 0 ${width} ${HEIGHT}`" role="img">
         <defs>
           <linearGradient :id="methodFill" x1="0" x2="0" y1="0" y2="1">
@@ -489,7 +500,9 @@ const tip = computed(() => {
 
 <style scoped>
 .mem { display: flex; flex-direction: column; gap: 10px; }
-.mem-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.mem-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; cursor: pointer; user-select: none; }
+.mem-head .legend { margin-left: auto; }
+.mem-head:hover .fold-chev { background: var(--ts-bg-hover); color: var(--ts-text-primary); }
 .mem-title h3 { margin: 0; font-family: var(--ts-font-display); font-size: 14px; font-weight: 650; }
 .mem-title h3 :deep(.hint) { margin-left: 6px; }
 .mem-title p { margin: 4px 0 0; color: var(--ts-text-secondary); font-size: 12px; }

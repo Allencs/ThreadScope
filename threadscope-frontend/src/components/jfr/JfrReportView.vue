@@ -17,6 +17,8 @@ import HintTip from '@/components/common/HintTip.vue'
 import CallerTree from '@/components/jfr/CallerTree.vue'
 import JfrCpuTrend, { type CpuTrendMethod } from '@/components/jfr/JfrCpuTrend.vue'
 import JfrMemoryPanel from '@/components/jfr/JfrMemoryPanel.vue'
+import JfrSource from '@/components/jfr/JfrSource.vue'
+import { JFR_SOURCES } from '@/utils/jfrEvents'
 import { methodParts } from '@/utils/methodKey'
 import JfrThreadsPanel from '@/components/jfr/JfrThreadsPanel.vue'
 
@@ -230,6 +232,7 @@ onMounted(async () => {
             <span class="meta-item"><b>{{ report.sampleCount.toLocaleString() }}</b>CPU 采样</span>
             <span class="meta-item"><b>{{ report.threadDumpCount }}</b>段线程 Dump</span>
             <span v-if="jvmShort" class="meta-item jvm" :title="report.jvmVersion ?? ''">{{ jvmShort }}</span>
+            <JfrSource :events="JFR_SOURCES.reportMeta" />
           </div>
         </div>
       </div>
@@ -311,6 +314,7 @@ onMounted(async () => {
             <p class="hint-note">录制时加 <code>-XX:FlightRecorderOptions:stackdepth=256</code> 可避免。</p>
           </HintTip>
           <span class="muted">{{ range ? '区间内 ' : '' }}{{ totalSamples.toLocaleString() }} 个样本 · {{ hotspots.length }} 个方法</span>
+          <JfrSource :events="JFR_SOURCES.hotMethods" />
           <HintTip v-if="exactPaths" heading="调用者树怎么看" :width="420">
             <p>点击方法展开<b>调用者</b>：按完整调用栈逐条路径统计，每个节点的百分比是它在<b>这条链</b>上占父节点样本的比例，沿链相乘就是占根方法的比例。</p>
             <p v-if="sort === 'self'">按 self 时，树只统计方法在栈顶执行的样本。</p>
@@ -357,7 +361,7 @@ onMounted(async () => {
         <div class="dump-hero">
           <div class="dump-count">{{ report?.threadDumpCount ?? 0 }}</div>
           <div>
-            <h2>录制里的线程 Dump</h2>
+            <h2>录制里的线程 Dump <JfrSource :events="JFR_SOURCES.threadDump" /></h2>
             <p v-if="report && report.threadDumpCount === 0">
               这份录制没有 jdk.ThreadDump 事件。录制时加上 <code>jdk.ThreadDump#period=10s</code> 才会周期性抓取。
             </p>
@@ -622,7 +626,7 @@ onMounted(async () => {
   background: var(--ts-accent-light);
   font-variant-numeric: tabular-nums;
 }
-.dump-hero h2 { margin: 2px 0 6px; font-size: 16px; }
+.dump-hero h2 { display: flex; align-items: center; gap: 10px; margin: 2px 0 6px; font-size: 16px; }
 .dump-hero p { margin: 0 0 14px; color: var(--ts-text-secondary); font-size: 13px; max-width: 720px; line-height: 1.65; }
 .dump-hero code { font-family: var(--ts-font-display); font-size: 12px; background: var(--ts-bg-inset); padding: 1px 6px; border-radius: 4px; color: var(--ts-text-primary); }
 .primary { border: 0; background: var(--ts-accent); color: #fff; border-radius: 9px; padding: 8px 16px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25); transition: filter var(--ts-transition); }

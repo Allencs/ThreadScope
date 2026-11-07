@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import type { JfrBucketRange, JfrCpuTimeline } from '@/api/threadscope'
 import HintTip from '@/components/common/HintTip.vue'
+import JfrSource from '@/components/jfr/JfrSource.vue'
+import { JFR_SOURCES } from '@/utils/jfrEvents'
 
 export interface CpuTrendMethod {
   pkg: string
@@ -373,6 +375,7 @@ const shareOfJvm = computed(() => {
             <p v-if="rangeEnabled" class="hint-note">在图上<b>按住拖动</b>框选一段时间，下方热点方法和调用者树只统计这段时间的采样；按 Esc 或点击区间标签上的 × 取消。</p>
             <p v-else class="hint-note">这份报告由旧版解析生成，调用栈没有时间信息，重新上传后可框选时间区间。</p>
           </HintTip>
+          <JfrSource :events="JFR_SOURCES.cpuChart" />
         </h3>
         <div v-if="timeline.deployment || env" class="env-line">
           <span v-if="timeline.deployment" class="env-tag" :class="`env-${timeline.deployment}`">{{ DEPLOYMENT_LABEL[timeline.deployment] }}</span>

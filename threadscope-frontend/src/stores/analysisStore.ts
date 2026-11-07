@@ -186,11 +186,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   // ── Actions ──
   function uploadOptions() {
-    const profile = settings.activeProfile
-    return {
-      businessPackages: profile.businessPackages,
-      applicationName: profile.name,
-    }
+    return { businessPackages: settings.profile.businessPackages }
   }
 
   async function uploadFile(files: File[]) {

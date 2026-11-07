@@ -75,7 +75,7 @@ function tone(percent: number): string {
 </script>
 
 <template>
-  <div class="tree">
+  <div class="tree" :class="{ root: depth <= 1 }">
     <div v-for="caller in callers" :key="caller.methodKey" class="node">
       <div
         class="row"
@@ -110,14 +110,15 @@ function tone(percent: number): string {
 
 <style scoped>
 .tree { display: block; }
+/* 最外层横向滚动：方法名完整显示，宽度取最长的一行，所有行等宽，悬停底色铺满 */
+.tree.root { overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 2px; }
+.tree.root > .node { width: max-content; min-width: 100%; }
 .node { display: block; }
-/* 整行不换行：空间不够时截断包名和参数，方法名最多占 60%，徽标不收缩 */
 .row {
   position: relative;
   display: flex;
   align-items: center;
   gap: 0;
-  min-width: 0;
   white-space: nowrap;
   min-height: 26px;
   padding-top: 2px;
@@ -144,10 +145,10 @@ function tone(percent: number): string {
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.pkg, .method, .params, .summary-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.pkg { flex: 0 1 auto; color: var(--ts-text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
-.method { flex: none; max-width: 60%; color: var(--ts-accent); font-weight: 650; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
-.params { flex: 0 1 auto; max-width: 360px; color: var(--ts-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+.pkg, .method, .params, .summary-label { flex: none; }
+.pkg { color: var(--ts-text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+.method { color: var(--ts-accent); font-weight: 650; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+.params { color: var(--ts-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
 .badge {
   flex: none;
   margin-left: 8px;
@@ -164,12 +165,11 @@ function tone(percent: number): string {
 .badge.mid { background: #d97706; }
 .badge.cool { background: #ca8a04; }
 .badge.none { background: #e2e8f0; color: var(--ts-text-secondary); }
-.summary-label { flex: 0 1 auto; color: var(--ts-text-muted); font-size: 12.5px; font-style: italic; }
+.summary-label { color: var(--ts-text-muted); font-size: 12.5px; font-style: italic; }
+/* 跟在徽标后面而不是贴右边：行可能比可视区宽，贴右边会滚出视野 */
 .more {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
+  flex: none;
+  margin-left: 8px;
   padding: 1px 8px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.96);

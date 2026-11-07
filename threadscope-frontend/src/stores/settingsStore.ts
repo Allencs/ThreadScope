@@ -6,11 +6,9 @@ import { createClassifier, type CodeLayerClassifier } from '@/utils/codeLayer'
 import * as api from '@/api/threadscope'
 
 /**
- * 应用配置 (按应用区分业务包与源码仓库) — 持久化在浏览器 localStorage。
+ * 代码归属配置 (业务包与源码仓库) — 持久化在浏览器 localStorage。
  */
-export interface AppProfile {
-  id: string
-  name: string
+export interface CodeProfile {
   businessPackages: string[]
   sourceLinks: SourceLinkRule[]
 }
@@ -18,56 +16,49 @@ export interface AppProfile {
 const STORAGE_KEY = 'ts:settings:v1'
 
 interface PersistedSettings {
-  profiles: AppProfile[]
-  activeProfileId: string | null
+  profile: CodeProfile
   foldFrameworkFrames: boolean
 }
 
-function newId(): string {
-  return Math.random().toString(36).slice(2, 10)
-}
-
-function defaultProfile(): AppProfile {
-  return { id: newId(), name: '默认应用', businessPackages: [], sourceLinks: [] }
+/** 旧版按应用保存多份配置，迁移时保留当时选中的那份 */
+interface LegacySettings {
+  profiles?: (CodeProfile & { id: string })[]
+  activeProfileId?: string | null
 }
 
 function load(): PersistedSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
-      const data = JSON.parse(raw) as Partial<PersistedSettings>
-      if (Array.isArray(data.profiles) && data.profiles.length > 0) {
-        return {
-          profiles: data.profiles,
-          activeProfileId: data.activeProfileId ?? data.profiles[0].id,
-          foldFrameworkFrames: data.foldFrameworkFrames ?? true,
-        }
+      const data = JSON.parse(raw) as Partial<PersistedSettings> & LegacySettings
+      const legacy = data.profiles?.find(p => p.id === data.activeProfileId) ?? data.profiles?.[0]
+      const profile = data.profile ?? legacy
+      return {
+        profile: {
+          businessPackages: profile?.businessPackages ?? [],
+          sourceLinks: profile?.sourceLinks ?? [],
+        },
+        foldFrameworkFrames: data.foldFrameworkFrames ?? true,
       }
     }
   } catch {
     // 配置损坏时回退默认值
   }
-  const p = defaultProfile()
-  return { profiles: [p], activeProfileId: p.id, foldFrameworkFrames: true }
+  return { profile: { businessPackages: [], sourceLinks: [] }, foldFrameworkFrames: true }
 }
 
 export const useSettingsStore = defineStore('settings', () => {
   const initial = load()
-  const profiles = ref<AppProfile[]>(initial.profiles)
-  const activeProfileId = ref<string | null>(initial.activeProfileId)
+  const profile = ref<CodeProfile>(initial.profile)
   const foldFrameworkFrames = ref(initial.foldFrameworkFrames)
 
   const settingsOpen = ref(false)
   const codeLayerConfig = ref<CodeLayerConfig | null>(null)
-  /** 当前分析使用的业务包 (来自后端 overview)，应用配置未指定业务包时兜底 */
+  /** 当前分析使用的业务包 (来自后端 overview)，设置里未指定业务包时兜底 */
   const analysisBusinessPackages = ref<string[]>([])
 
-  const activeProfile = computed<AppProfile>(() =>
-    profiles.value.find(p => p.id === activeProfileId.value) ?? profiles.value[0],
-  )
-
   const effectiveBusinessPackages = computed<string[]>(() => {
-    if (activeProfile.value.businessPackages.length) return activeProfile.value.businessPackages
+    if (profile.value.businessPackages.length) return profile.value.businessPackages
     if (analysisBusinessPackages.value.length) return analysisBusinessPackages.value
     return codeLayerConfig.value?.defaultBusinessPackages ?? []
   })
@@ -90,30 +81,14 @@ export const useSettingsStore = defineStore('settings', () => {
     return configLoading
   }
 
-  function saveProfile(profile: AppProfile) {
-    const idx = profiles.value.findIndex(p => p.id === profile.id)
-    if (idx >= 0) profiles.value.splice(idx, 1, profile)
-    else profiles.value.push(profile)
+  function saveProfile(next: CodeProfile) {
+    profile.value = next
   }
 
-  function createProfile(name: string): AppProfile {
-    const p: AppProfile = { id: newId(), name, businessPackages: [], sourceLinks: [] }
-    profiles.value.push(p)
-    activeProfileId.value = p.id
-    return p
-  }
-
-  function deleteProfile(id: string) {
-    if (profiles.value.length <= 1) return
-    profiles.value = profiles.value.filter(p => p.id !== id)
-    if (activeProfileId.value === id) activeProfileId.value = profiles.value[0].id
-  }
-
-  watch([profiles, activeProfileId, foldFrameworkFrames], () => {
+  watch([profile, foldFrameworkFrames], () => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        profiles: profiles.value,
-        activeProfileId: activeProfileId.value,
+        profile: profile.value,
         foldFrameworkFrames: foldFrameworkFrames.value,
       } satisfies PersistedSettings))
     } catch {
@@ -123,8 +98,8 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     settingsOpen,
-    profiles, activeProfileId, activeProfile, foldFrameworkFrames,
+    profile, foldFrameworkFrames,
     codeLayerConfig, analysisBusinessPackages, effectiveBusinessPackages, businessInferred, classifier,
-    loadCodeLayerConfig, saveProfile, createProfile, deleteProfile,
+    loadCodeLayerConfig, saveProfile,
   }
 })

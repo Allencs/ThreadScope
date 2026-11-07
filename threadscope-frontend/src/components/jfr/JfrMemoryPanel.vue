@@ -16,10 +16,14 @@ import {
 import HintTip from '@/components/common/HintTip.vue'
 import CallerTree from '@/components/jfr/CallerTree.vue'
 import JfrMemoryTrend, { type MemoryTrendMethod } from '@/components/jfr/JfrMemoryTrend.vue'
+import JfrSource from '@/components/jfr/JfrSource.vue'
 import JfrStallPanel from '@/components/jfr/JfrStallPanel.vue'
+import FoldChevron from '@/components/common/FoldChevron.vue'
 import CodeSettingsModal from '@/components/settings/CodeSettingsModal.vue'
+import { useFoldState } from '@/composables/useFoldState'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { formatBytes, formatNanos, formatRate } from '@/utils/bytes'
+import { allocationEvents, JFR_SOURCES } from '@/utils/jfrEvents'
 import { methodParts } from '@/utils/methodKey'
 
 const props = defineProps<{ reportId: string; active: boolean }>()
@@ -51,8 +55,11 @@ const totalBytes = ref(0)
 const stallThread = ref('')
 const stallAnchor = ref<HTMLDivElement | null>(null)
 
+const { folded, toggle: toggleFold, titleClick } = useFoldState('ts:jfr:memory:folded')
+
 function showStalls(name: string) {
   stallThread.value = stallThread.value === name ? '' : name
+  folded.stalls = false
   stallAnchor.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
@@ -73,6 +80,7 @@ provide('jfrFormatWeight', (value: number) => formatBytes(value))
 const sources = computed(() => overview.value?.sources ?? [])
 const activeSource = computed<JfrAllocationSource | null>(() =>
   sources.value.find(s => s.source === source.value) ?? sources.value[0] ?? null)
+const allocEvents = computed(() => allocationEvents(activeSource.value?.source))
 
 async function loadOverview() {
   loadingOverview.value = true
@@ -266,7 +274,7 @@ const suggestedPackages = computed(() => {
 })
 
 function usePackage(pkg: string) {
-  const profile = settings.activeProfile
+  const profile = settings.profile
   if (profile.businessPackages.includes(pkg)) return
   settings.saveProfile({ ...profile, businessPackages: [...profile.businessPackages, pkg] })
 }
@@ -334,31 +342,37 @@ const FINDING_ICON = { critical: '!', warn: '!', info: 'i' } as const
           <span class="k-label">实际分配速率</span>
           <span class="k-value">{{ kpis.measuredRate != null ? formatRate(kpis.measuredRate) : '—' }}</span>
           <span class="k-sub">{{ kpis.measuredRate != null ? `录制期间共 ${formatBytes(overview.measuredTotal)}` : '没有 ThreadAllocationStatistics' }}</span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.measured" />
         </div>
         <div class="kpi">
           <span class="k-label">事件估算（{{ kpis.estimated ? SOURCE_LABEL[kpis.estimated.source] : '无' }}）</span>
           <span class="k-value">{{ kpis.estimated ? formatBytes(kpis.estimated.estimatedBytes) : '—' }}</span>
           <span class="k-sub">{{ kpis.estimated ? `${kpis.estimated.events.toLocaleString()} 个事件 · 覆盖 ${coverSeconds(kpis.estimated)} 秒` : '录制里没有分配调用栈' }}</span>
+          <JfrSource plain class="k-src" :events="allocEvents" />
         </div>
         <div class="kpi">
           <span class="k-label">GC</span>
           <span class="k-value">{{ kpis.gcCount }} 次</span>
           <span class="k-sub">停顿共 {{ formatNanos(kpis.pause) }}，最长 {{ formatNanos(kpis.longest) }}</span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.gc" />
         </div>
         <div class="kpi" :class="{ bad: overview.stallCount > 0 }">
           <span class="k-label">分配停顿</span>
           <span class="k-value">{{ overview.stallCount }} 次</span>
           <span class="k-sub">{{ overview.stallCount ? `累计 ${formatNanos(overview.stallNanos)}，最长 ${formatNanos(overview.longestStallNanos)}` : '没有线程因等待 GC 而阻塞' }}</span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.stall" />
         </div>
         <div class="kpi" :class="{ bad: kpis.floorPeak != null && overview.heapMax != null && kpis.floorPeak > overview.heapMax * 0.85 }">
           <span class="k-label">GC 后堆占用峰值</span>
           <span class="k-value">{{ formatBytes(kpis.floorPeak) }}</span>
           <span class="k-sub">堆上限 {{ formatBytes(overview.heapMax) }}<template v-if="kpis.floorPeak != null && overview.heapMax"> · {{ percentOf(kpis.floorPeak, overview.heapMax) }}</template></span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.heapFloor" />
         </div>
         <div class="kpi">
           <span class="k-label">收集器</span>
           <span class="k-value small">{{ overview.youngCollector ?? '—' }}</span>
           <span class="k-sub">{{ overview.oldCollector ? `老年代 ${overview.oldCollector}` : '' }}</span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.collector" />
         </div>
       </section>
 
@@ -370,18 +384,22 @@ const FINDING_ICON = { critical: '!', warn: '!', info: 'i' } as const
           :mode="focusMode"
           :range="range"
           :range-enabled="!!list?.rangeSupported"
+          :folded="!!folded.trend"
           @select="selectRange"
+          @toggle="toggleFold('trend')"
         />
       </section>
 
-      <div class="mem-grid">
-        <section class="card alloc">
-          <div class="card-title">
+      <div class="mem-grid" :class="{ wide: folded.alloc }">
+        <section class="card alloc" :class="{ folded: folded.alloc }">
+          <div class="card-title foldable" @click="titleClick('alloc', $event)">
             <h2>分配热点</h2>
             <span class="muted">哪段代码分配了最多的内存</span>
+            <JfrSource :events="allocEvents" />
+            <FoldChevron :folded="folded.alloc" />
           </div>
 
-          <div v-if="!sources.length" class="no-stacks">
+          <div v-if="!sources.length" v-show="!folded.alloc" class="no-stacks">
             <p>这份录制没有分配调用栈事件（ObjectAllocationSample / ObjectAllocationInNewTLAB），无法定位到方法。</p>
             <ul>
               <li>JDK 16+：用 default 模板就会采集 <code>jdk.ObjectAllocationSample</code>，确认没有被关闭。</li>
@@ -390,7 +408,7 @@ const FINDING_ICON = { critical: '!', warn: '!', info: 'i' } as const
             <p>右侧的线程池分配量来自 ThreadAllocationStatistics，不依赖调用栈。</p>
           </div>
 
-          <template v-else>
+          <div v-else v-show="!folded.alloc">
             <div class="tools">
               <div v-if="sources.length > 1" class="seg">
                 <button v-for="s in sources" :key="s.source" :class="{ on: activeSource?.source === s.source }" @click="setSource(s.source)">
@@ -484,22 +502,24 @@ const FINDING_ICON = { critical: '!', warn: '!', info: 'i' } as const
               </div>
               <p v-if="!loading && list && list.methods.length === 0" class="empty">没有匹配的方法。</p>
             </div>
-          </template>
+          </div>
         </section>
 
         <aside class="side">
-          <section v-if="list?.types.length" class="card side-card">
-            <div class="card-title">
+          <section v-if="list?.types.length" class="card side-card" :class="{ folded: folded.types }">
+            <div class="card-title foldable" @click="titleClick('types', $event)">
               <h3>对象类型</h3>
-              <span class="muted">点击只看该类型</span>
+              <JfrSource :events="allocEvents" />
+              <FoldChevron :folded="folded.types" />
             </div>
             <button
               v-for="t in list.types.slice(0, 15)"
+              v-show="!folded.types"
               :key="t.name"
               type="button"
               class="type-row"
               :class="{ on: type === t.name }"
-              :title="t.name"
+              :title="`${t.name}\n点击只看该类型`"
               @click="setType(t.name)"
             >
               <span class="t-name">{{ t.name }}</span>
@@ -509,14 +529,13 @@ const FINDING_ICON = { critical: '!', warn: '!', info: 'i' } as const
             </button>
           </section>
 
-          <section v-if="overview.pools.length" class="card side-card">
-            <div class="card-title">
+          <section v-if="overview.pools.length" class="card side-card" :class="{ folded: folded.pools }">
+            <div class="card-title foldable" @click="titleClick('pools', $event)">
               <h3>线程池分配量</h3>
-              <HintTip heading="实际分配量" :width="340">
-                <p>来自 ThreadAllocationStatistics：每个线程分配计数器在录制期间的增量，是<b>实际值</b>，不受采样影响，default 模板也有。</p>
-              </HintTip>
+              <JfrSource :events="JFR_SOURCES.pools" />
+              <FoldChevron :folded="folded.pools" />
             </div>
-            <div v-for="p in overview.pools" :key="p.name" class="pool">
+            <div v-for="p in overview.pools" v-show="!folded.pools" :key="p.name" class="pool">
               <button type="button" class="pool-row" @click="openPools[p.name] = !openPools[p.name]">
                 <span class="chevron">{{ p.top.length ? (openPools[p.name] ? '▾' : '▸') : '' }}</span>
                 <span class="p-name" :title="p.name">{{ p.name }}</span>
@@ -532,30 +551,35 @@ const FINDING_ICON = { critical: '!', warn: '!', info: 'i' } as const
             </div>
           </section>
 
-          <section v-if="overview.stallThreads.length" class="card side-card">
-            <div class="card-title">
+          <section v-if="overview.stallThreads.length" class="card side-card" :class="{ folded: folded.stallThreads }">
+            <div class="card-title foldable" @click="titleClick('stallThreads', $event)">
               <h3>分配停顿最久的线程</h3>
-              <span class="muted">点击看调用栈</span>
+              <JfrSource :events="JFR_SOURCES.stall" />
+              <FoldChevron :folded="folded.stallThreads" />
             </div>
             <button
               v-for="t in overview.stallThreads"
+              v-show="!folded.stallThreads"
               :key="t.name"
               type="button"
               class="stall-row"
               :class="{ on: stallThread === t.name }"
+              :title="`${t.name}\n点击查看停顿调用栈`"
               @click="showStalls(t.name)"
             >
-              <span :title="t.name">{{ t.name }}</span>
+              <span>{{ t.name }}</span>
               <em>{{ t.count }} 次</em>
               <b>{{ formatNanos(t.durationNanos) }}</b>
             </button>
           </section>
 
-          <section v-if="overview.collectors.length" class="card side-card">
-            <div class="card-title">
+          <section v-if="overview.collectors.length" class="card side-card" :class="{ folded: folded.gc }">
+            <div class="card-title foldable" @click="titleClick('gc', $event)">
               <h3>GC 统计</h3>
+              <JfrSource :events="JFR_SOURCES.gc" />
+              <FoldChevron :folded="folded.gc" />
             </div>
-            <div v-for="c in overview.collectors" :key="c.name" class="gc-row">
+            <div v-for="c in overview.collectors" v-show="!folded.gc" :key="c.name" class="gc-row">
               <b>{{ c.name }}</b>
               <span>{{ c.count }} 次 · 停顿 {{ formatNanos(c.pauseNanos) }} · 最长 {{ formatNanos(c.longestPauseNanos) }}</span>
               <span class="muted">GC 耗时合计 {{ formatNanos(c.durationNanos) }}（含并发阶段）</span>
@@ -571,7 +595,9 @@ const FINDING_ICON = { critical: '!', warn: '!', info: 'i' } as const
           :range="range"
           :range-text="rangeText"
           :pkgs="packages"
+          :folded="!!folded.stalls"
           @clear-range="selectRange(null)"
+          @toggle="toggleFold('stalls')"
         />
       </div>
     </template>
@@ -588,8 +614,13 @@ const FINDING_ICON = { critical: '!', warn: '!', info: 'i' } as const
 .card { background: var(--ts-bg-surface); border: var(--ts-border); border-radius: 14px; box-shadow: var(--ts-shadow-xs); padding: 16px 18px; min-width: 0; }
 .empty-card { display: flex; align-items: center; gap: 10px; color: var(--ts-text-secondary); font-size: 13px; }
 .card-title { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.card-title h2 { margin: 0; font-size: 15px; font-weight: 650; }
-.card-title h3 { margin: 0; font-size: 13.5px; font-weight: 650; }
+.card-title h2 { margin: 0; font-size: 15px; font-weight: 650; flex: none; }
+.card-title h3 { margin: 0; font-size: 13.5px; font-weight: 650; flex: none; white-space: nowrap; }
+.card-title.foldable { cursor: pointer; user-select: none; }
+.card.folded .card-title { margin-bottom: 0; }
+.side-card.folded { padding-bottom: 14px; }
+.card-title .fold-chev { margin-left: auto; }
+.card-title.foldable:hover .fold-chev { background: var(--ts-bg-hover); color: var(--ts-text-primary); }
 
 .findings { display: flex; flex-direction: column; gap: 8px; }
 .finding { display: flex; gap: 12px; align-items: flex-start; padding: 10px 14px; border-radius: 10px; border: 1px solid; font-size: 12.5px; line-height: 1.6; }
@@ -615,10 +646,14 @@ const FINDING_ICON = { critical: '!', warn: '!', info: 'i' } as const
 .k-value { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ts-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .k-value.small { font-size: 15px; line-height: 27px; }
 .k-sub { font-size: 11.5px; color: var(--ts-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.k-src { align-self: flex-start; margin-top: 3px; }
 
 .mem-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
 @media (max-width: 1180px) { .mem-grid { grid-template-columns: minmax(0, 1fr); } }
 .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+/* 分配热点折叠后右侧会空出一长条，改为通栏，侧栏卡片在下方横排 */
+.mem-grid.wide { grid-template-columns: minmax(0, 1fr); }
+.mem-grid.wide .side { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); align-items: start; }
 
 .tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .seg { display: inline-flex; background: var(--ts-bg-inset); border-radius: 9px; padding: 3px; }

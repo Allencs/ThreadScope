@@ -8,7 +8,9 @@ import {
   type JfrThreadPool,
   type JfrThreadRow,
 } from '@/api/threadscope'
+import JfrSource from '@/components/jfr/JfrSource.vue'
 import JfrThreadTrend from '@/components/jfr/JfrThreadTrend.vue'
+import { JFR_SOURCES } from '@/utils/jfrEvents'
 
 const props = defineProps<{ reportId: string }>()
 
@@ -272,21 +274,25 @@ const allocStats = computed(() => {
           <span class="k-label">平台线程</span>
           <span class="k-value">{{ overview.totalThreads.toLocaleString() }}</span>
           <span class="k-foot">录制中观测到的线程</span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.threadKpi" />
         </div>
         <div class="kpi">
           <span class="k-label">线程池</span>
           <span class="k-value">{{ poolCount }}</span>
           <span class="k-foot">按线程名归类</span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.threadKpi" />
         </div>
         <div class="kpi created">
           <span class="k-label">录制中新建</span>
           <span class="k-value">+{{ overview.created }}</span>
-          <span class="k-foot">jdk.ThreadStart</span>
+          <span class="k-foot">录制期间启动的线程</span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.threadStart" />
         </div>
         <div class="kpi ended">
           <span class="k-label">录制中销毁</span>
           <span class="k-value">−{{ overview.ended }}</span>
-          <span class="k-foot">jdk.ThreadEnd</span>
+          <span class="k-foot">录制期间结束的线程</span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.threadEnd" />
         </div>
         <div class="kpi">
           <span class="k-label">净变化</span>
@@ -294,11 +300,13 @@ const allocStats = computed(() => {
             {{ overview.created - overview.ended > 0 ? '+' : '' }}{{ overview.created - overview.ended }}
           </span>
           <span class="k-foot">结束时存活 {{ overview.aliveAtEnd.toLocaleString() }}</span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.threadNet" />
         </div>
         <div class="kpi">
           <span class="k-label">JVM 历史峰值</span>
           <span class="k-value">{{ overview.peakActive == null ? '—' : overview.peakActive.toLocaleString() }}</span>
           <span class="k-foot">JVM 启动以来同时存活的最大线程数</span>
+          <JfrSource plain class="k-src" :events="JFR_SOURCES.threadPeak" />
         </div>
       </section>
 
@@ -308,6 +316,7 @@ const allocStats = computed(() => {
             <h2>
               线程数量变化
               <span class="scope" :class="{ pool: selectedPool }">{{ selectedPool ? selectedPool.name : '全部线程' }}</span>
+              <JfrSource :events="JFR_SOURCES.threadChart" />
             </h2>
             <p class="hint">
               上图是每个时间点仍存活的线程数，下图柱子向上是新建、向下是销毁。每格 {{ Math.round(overview.bucketMillis / 1000) }} 秒。
@@ -348,7 +357,7 @@ const allocStats = computed(() => {
 
       <section class="card">
         <header class="card-head list-head">
-          <h2>线程池 <span class="count">{{ visiblePools.length }}</span></h2>
+          <h2>线程池 <span class="count">{{ visiblePools.length }}</span><JfrSource :events="JFR_SOURCES.threadTable" /></h2>
           <div class="tools">
             <label class="search">
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 3a5.5 5.5 0 1 0 3.36 9.86l3.64 3.64 1.06-1.06-3.64-3.64A5.5 5.5 0 0 0 8.5 3Zm0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z" /></svg>
@@ -458,7 +467,7 @@ const allocStats = computed(() => {
 
       <section v-if="overview.virtualThreads.started > 0" class="card">
         <header class="card-head">
-          <h2>虚拟线程</h2>
+          <h2>虚拟线程 <JfrSource :events="JFR_SOURCES.virtualThreads" /></h2>
           <p class="hint">
             启动 {{ overview.virtualThreads.started.toLocaleString() }} · 结束 {{ overview.virtualThreads.ended.toLocaleString() }}
             · 钉住 {{ overview.virtualThreads.pinned.toLocaleString() }}
@@ -513,15 +522,15 @@ const allocStats = computed(() => {
             <div v-if="detailLoading" class="loading small"><span class="spinner"></span>加载详情…</div>
             <template v-else-if="detail">
               <div v-if="cpuStats" class="metric">
-                <div class="metric-head"><b>CPU 占用</b><span>平均 {{ cpuStats.avg.toFixed(1) }}% · 最高 {{ cpuStats.max.toFixed(1) }}%</span></div>
+                <div class="metric-head"><b>CPU 占用 <JfrSource :events="JFR_SOURCES.threadCpu" /></b><span>平均 {{ cpuStats.avg.toFixed(1) }}% · 最高 {{ cpuStats.max.toFixed(1) }}%</span></div>
                 <svg viewBox="0 0 360 56" preserveAspectRatio="none" class="metric-svg"><path :d="cpuStats.path" class="cpu" /></svg>
               </div>
               <div v-if="allocStats" class="metric">
-                <div class="metric-head"><b>累计内存分配</b><span>{{ formatBytes(allocStats.total) }}</span></div>
+                <div class="metric-head"><b>累计内存分配 <JfrSource :events="JFR_SOURCES.threadAlloc" /></b><span>{{ formatBytes(allocStats.total) }}</span></div>
                 <svg viewBox="0 0 360 56" preserveAspectRatio="none" class="metric-svg"><path :d="allocStats.path" class="alloc" /></svg>
               </div>
               <div class="stack">
-                <div class="metric-head"><b>启动栈</b><span>jdk.ThreadStart</span></div>
+                <div class="metric-head"><b>启动栈 <JfrSource :events="JFR_SOURCES.threadStack" /></b></div>
                 <p v-if="detail.startStack.length === 0" class="hint">
                   {{ detail.existedBefore ? '线程在录制开始前就已创建，没有启动栈。' : '录制没有带上启动栈。' }}
                 </p>
@@ -566,6 +575,7 @@ const allocStats = computed(() => {
 .kpi.created .k-value, .k-value.pos { color: #15803d; }
 .kpi.ended .k-value, .k-value.neg { color: #b91c1c; }
 .k-foot { font-size: 11px; color: var(--ts-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.k-src { align-self: flex-start; margin-top: 2px; }
 
 .card { background: var(--ts-bg-surface); border: var(--ts-border); border-radius: 14px; box-shadow: var(--ts-shadow-xs); padding: 16px 18px; }
 .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 10px; }
@@ -709,7 +719,8 @@ const allocStats = computed(() => {
 .facts dd { margin: 0; color: var(--ts-text-primary); word-break: break-all; }
 .facts small { color: var(--ts-text-muted); }
 .metric { border: var(--ts-border); border-radius: 10px; padding: 10px 12px; }
-.metric-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; margin-bottom: 6px; }
+.metric-head { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; margin-bottom: 6px; }
+.metric-head b { display: inline-flex; align-items: center; gap: 8px; }
 .metric-head span { color: var(--ts-text-secondary); font-variant-numeric: tabular-nums; }
 .metric-svg { width: 100%; height: 56px; display: block; }
 .metric-svg path { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; }

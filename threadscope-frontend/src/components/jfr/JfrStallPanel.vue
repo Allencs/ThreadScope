@@ -9,13 +9,27 @@ import {
   type JfrStallReport,
   type JfrStallTrace,
 } from '@/api/threadscope'
+import FoldChevron from '@/components/common/FoldChevron.vue'
 import HintTip from '@/components/common/HintTip.vue'
+import JfrSource from '@/components/jfr/JfrSource.vue'
 import { formatBytes, formatNanos } from '@/utils/bytes'
+import { JFR_SOURCES } from '@/utils/jfrEvents'
 import { methodParts } from '@/utils/methodKey'
 
-const props = defineProps<{ reportId: string; range: JfrBucketRange | null; rangeText: string; pkgs: string[] }>()
+const props = defineProps<{
+  reportId: string
+  range: JfrBucketRange | null
+  rangeText: string
+  pkgs: string[]
+  folded?: boolean
+}>()
 const thread = defineModel<string>('thread', { default: '' })
-const emit = defineEmits<{ clearRange: [] }>()
+const emit = defineEmits<{ clearRange: []; toggle: [] }>()
+
+function onTitleClick(event: MouseEvent) {
+  if ((event.target as HTMLElement).closest('.hint, button')) return
+  emit('toggle')
+}
 
 const FRAME_PREVIEW = 14
 const EVENT_PREVIEW = 8
@@ -102,8 +116,8 @@ function tone(percent: number): string {
 </script>
 
 <template>
-  <section class="card stall">
-    <div class="card-title">
+  <section class="card stall" :class="{ folded }">
+    <div class="card-title" @click="onTitleClick">
       <h2>分配停顿明细</h2>
       <span class="muted">哪段代码在等 ZGC 腾出内存</span>
       <HintTip heading="怎么看" :width="460">
@@ -111,9 +125,12 @@ function tone(percent: number): string {
         <p><b>按业务代码</b>（推荐）：从栈顶往下找第一个业务方法，同一个业务方法的停顿合成一组，看哪些接口被拖慢。<b>按调用栈</b>：每条完整栈一组，看具体卡在哪个 new 上。</p>
         <p class="hint-note">停顿的线程是「撞上」内存不足的线程，不一定是分配最多的。要减少停顿，还是要降低上方分配热点里排前面的代码的分配量，或者给堆留出更多余量。</p>
       </HintTip>
+      <JfrSource :events="JFR_SOURCES.stallDetail" />
+      <span v-if="folded && report" class="muted">· {{ report.count }} 次，累计 {{ formatNanos(report.durationNanos) }}</span>
+      <FoldChevron :folded="folded" />
     </div>
 
-    <div class="tools">
+    <div v-show="!folded" class="tools">
       <div class="seg">
         <button :class="{ on: group === 'business' }" @click="group = 'business'">按业务代码</button>
         <button :class="{ on: group === 'stack' }" @click="group = 'stack'">按调用栈</button>
@@ -133,12 +150,12 @@ function tone(percent: number): string {
       </span>
     </div>
 
-    <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
-    <p v-if="report && !report.stacksAvailable" class="notice">
+    <p v-if="errorMsg" v-show="!folded" class="error">{{ errorMsg }}</p>
+    <p v-if="report && !report.stacksAvailable" v-show="!folded" class="notice">
       这份报告解析时还没有保存停顿的调用栈，重新上传 .jfr 即可查看；下面只按线程和耗时统计。
     </p>
 
-    <div v-if="report" class="groups" :class="{ dim: loading }">
+    <div v-if="report" v-show="!folded" class="groups" :class="{ dim: loading }">
       <div v-for="g in report.groups" :key="g.key" class="group">
         <div class="g-line" :class="{ open: opened[g.key] }" @click="opened[g.key] = !opened[g.key]">
           <span class="chevron">{{ opened[g.key] ? '▾' : '▸' }}</span>
@@ -238,6 +255,10 @@ function tone(percent: number): string {
 .card { background: var(--ts-bg-surface); border: var(--ts-border); border-radius: 14px; box-shadow: var(--ts-shadow-xs); padding: 16px 18px; min-width: 0; }
 .card-title { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .card-title h2 { margin: 0; font-size: 15px; font-weight: 650; }
+.card-title { cursor: pointer; user-select: none; }
+.card.folded .card-title { margin-bottom: 0; }
+.card-title .fold-chev { margin-left: auto; }
+.card-title:hover .fold-chev { background: var(--ts-bg-hover); color: var(--ts-text-primary); }
 .muted { color: var(--ts-text-secondary); font-size: 12.5px; white-space: nowrap; }
 .spacer { flex: 1; }
 .error { color: var(--ts-danger); margin: 0 0 8px; }

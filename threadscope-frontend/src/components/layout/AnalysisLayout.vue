@@ -141,9 +141,6 @@ function handleNewUpload() {
       </div>
 
       <div class="topbar-right">
-        <span v-if="settings.activeProfile" class="profile-pill" :title="'当前应用配置：' + settings.activeProfile.name">
-          {{ settings.activeProfile.name }}
-        </span>
         <button class="topbar-btn" @click="settings.settingsOpen = true" title="配置业务包前缀与源码仓库">
           代码归属
         </button>
@@ -316,18 +313,6 @@ function handleNewUpload() {
   display: flex;
   align-items: center;
   gap: var(--ts-space-sm);
-}
-
-.profile-pill {
-  font-size: var(--ts-font-size-xs);
-  color: var(--ts-text-muted);
-  padding: 2px 10px;
-  border-radius: var(--ts-radius-full);
-  background: var(--ts-bg-inset);
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ── Snapshot switch ── */

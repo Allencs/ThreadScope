@@ -4,7 +4,7 @@
  *
  * - 栈帧按 JDK / 三方框架 / 业务代码三层着色，业务帧高亮
  * - 连续的非业务帧 (不含锁操作、不在栈顶) 折叠为一行，可逐段展开
- * - 业务帧按应用配置的源码仓库模板生成跳转链接
+ * - 业务帧按设置里的源码仓库模板生成跳转链接
  * - 锁操作行内嵌在对应栈帧之后，点击跳转到锁分析页
  */
 import { computed, onMounted, ref, watch } from 'vue'
@@ -111,7 +111,7 @@ function expandRun(start: number) {
 
 function sourceUrl(idx: number): string | null {
   const frame = props.frames[idx]
-  const rules = settings.activeProfile.sourceLinks
+  const rules = settings.profile.sourceLinks
   const rule = findRule(frame.className, rules)
   if (!rule) return null
   // 前缀留空的规则只作用于业务代码

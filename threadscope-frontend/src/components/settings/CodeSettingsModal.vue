@@ -1,33 +1,31 @@
 <script setup lang="ts">
 /**
- * CodeSettingsModal — 按应用配置"代码归属"：
+ * CodeSettingsModal — 配置"代码归属"：
  * - 业务包前缀 (区分业务代码与三方框架)
  * - 源码仓库链接模板 (栈帧跳转源码)
  * 配置保存在浏览器本地，上传时随请求带给后端用于诊断中的"业务调用点"定位。
  */
 import { computed, ref, watch } from 'vue'
-import { useSettingsStore, type AppProfile } from '@/stores/settingsStore'
+import { useSettingsStore, type CodeProfile } from '@/stores/settingsStore'
 import { useAnalysisStore } from '@/stores/analysisStore'
 import { SOURCE_LINK_PRESETS, type SourceLinkRule } from '@/utils/sourceLink'
 
 const settings = useSettingsStore()
 const analysis = useAnalysisStore()
 
-const draft = ref<AppProfile | null>(null)
+const draft = ref<CodeProfile | null>(null)
 const packagesText = ref('')
-const newProfileName = ref('')
 
 function loadDraft() {
-  const p = settings.activeProfile
+  const p = settings.profile
   draft.value = {
-    ...p,
     businessPackages: [...p.businessPackages],
     sourceLinks: p.sourceLinks.map(r => ({ ...r })),
   }
   packagesText.value = p.businessPackages.join('\n')
 }
 
-watch(() => [settings.settingsOpen, settings.activeProfileId], ([open]) => {
+watch(() => settings.settingsOpen, open => {
   if (open) loadDraft()
 }, { immediate: true })
 
@@ -60,34 +58,13 @@ function applyPreset(rule: SourceLinkRule, ev: Event) {
   ;(ev.target as HTMLSelectElement).value = ''
 }
 
-function switchProfile(id: string) {
-  save(false)
-  settings.activeProfileId = id
-}
-
-function createProfile() {
-  const name = newProfileName.value.trim()
-  if (!name) return
-  save(false)
-  settings.createProfile(name)
-  newProfileName.value = ''
-}
-
-function deleteProfile() {
-  if (!draft.value || settings.profiles.length <= 1) return
-  if (!confirm(`删除应用配置「${draft.value.name}」？`)) return
-  settings.deleteProfile(draft.value.id)
-}
-
-function save(close = true) {
+function save() {
   if (!draft.value) return
   settings.saveProfile({
-    ...draft.value,
-    name: draft.value.name.trim() || '未命名应用',
     businessPackages: parsedPackages.value,
     sourceLinks: draft.value.sourceLinks.filter(r => r.template.trim()),
   })
-  if (close) settings.settingsOpen = false
+  settings.settingsOpen = false
 }
 
 function close() {
@@ -103,22 +80,6 @@ function close() {
           <h3>代码归属设置</h3>
           <button class="icon-btn" title="关闭" @click="close">×</button>
         </header>
-
-        <section class="settings-section">
-          <div class="section-label">应用</div>
-          <div class="profile-row">
-            <select class="input" :value="draft.id" @change="switchProfile(($event.target as HTMLSelectElement).value)">
-              <option v-for="p in settings.profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
-            <input v-model="draft.name" class="input" placeholder="应用名称" />
-            <button class="btn btn--ghost" :disabled="settings.profiles.length <= 1" @click="deleteProfile">删除</button>
-          </div>
-          <div class="profile-row">
-            <input v-model="newProfileName" class="input" placeholder="新应用名称，如 order-service" @keyup.enter="createProfile" />
-            <button class="btn" :disabled="!newProfileName.trim()" @click="createProfile">新建应用</button>
-          </div>
-          <p class="section-hint">上传 dump 时使用当前选中的应用配置。</p>
-        </section>
 
         <section class="settings-section">
           <div class="section-label">业务包前缀</div>
@@ -225,7 +186,6 @@ function close() {
   border-radius: var(--ts-radius-xs);
 }
 
-.profile-row,
 .rule-row {
   display: flex;
   gap: var(--ts-space-sm);
