@@ -23,8 +23,8 @@ class JfrMemoryTest {
     @BeforeAll
     static void parse() {
         var properties = new JfrProperties(512, "", 14, 5000, 120, 50, 1);
-        defaults = new JfrRecordingParser(properties).parse(Path.of("..", "samples", "jfr", "alloc_default.jfr"));
-        tlab = new JfrRecordingParser(properties).parse(Path.of("..", "samples", "jfr", "hotmethods_before.jfr"));
+        defaults = new JfrRecordingParser(properties).parse(Path.of("src", "test", "resources", "jfr", "alloc_default.jfr"));
+        tlab = new JfrRecordingParser(properties).parse(Path.of("src", "test", "resources", "jfr", "hotmethods_before.jfr"));
     }
 
     @Test

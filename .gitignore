@@ -40,6 +40,10 @@ desktop.ini
 .env.*
 !.env.example
 
+# JFR 录制默认带环境变量和本机进程命令行，可能含密钥；只提交录制时关掉了这些事件的测试样例
+*.jfr
+!threadscope-backend/src/test/resources/jfr/*.jfr
+
 # ===== Logs =====
 *.log
 logs/

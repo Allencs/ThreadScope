@@ -15,7 +15,7 @@ class JfrRecordingParserTest {
 
     @BeforeAll
     static void parseSample() {
-        Path sample = Path.of("..", "samples", "jfr", "hotmethods_before.jfr");
+        Path sample = Path.of("src", "test", "resources", "jfr", "hotmethods_before.jfr");
         var properties = new JfrProperties(512, "", 14, 5000, 120, 50, 1);
         parsed = new JfrRecordingParser(properties).parse(sample);
     }
